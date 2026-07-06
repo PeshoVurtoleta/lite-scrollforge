@@ -1,0 +1,113 @@
+# @zakkster/lite-scrollforge
+
+Zero-GC, zero-dependency single-file ESM authoring layer for CSS Scroll-Driven
+Animations. Compile storyboards to native CSS, GSAP, or lite-scroll-rig-pro
+code; drop-in polyfill runtime for browsers without native support.
+
+## Install
+
+    npm i @zakkster/lite-scrollforge
+
+## Minimal example
+
+    import { attachStoryboardRuntime } from '@zakkster/lite-scrollforge';
+
+    attachStoryboardRuntime({
+        tracks: [{
+            selector: '.hero-title',
+            timeline: { kind: 'view' },
+            range: { start: 'entry 0%', end: 'entry 100%' },
+            keyframes: [
+                { opacity: 0, translateY: 30 },
+                { opacity: 1, translateY: 0 }
+            ],
+            easing: 'easeOutCubic'
+        }]
+    });
+
+## Exports (15 total; 13 canonical, 2 deprecated aliases)
+
+Core (CSS emission):
+    trackToCss(track)              -> { keyframesName, keyframesCss, ruleCss }
+    storyboardToCss(sb, opts?)     -> string
+    attachStoryboard(sb, root?)    -> { detach, styleElement }
+    resetKeyframeCounter()
+    HAS_NATIVE_SUPPORT             -> boolean
+
+Easings + CSS Level 4 linear():
+    CSS_EASINGS                    -> frozen Record<string, string>  (29 entries)
+    EASINGS                        -> alias of CSS_EASINGS  (deprecated)
+    cubicBezierCss(x1,y1,x2,y2)    -> string
+    cubicBezier                    -> alias of cubicBezierCss  (deprecated)
+    linearPoints(fn, samples?)     -> string  (CSS linear(...))
+    easingToCssTimingFunction(input, samples?) -> string
+
+Sequencing:
+    sequenceOnTimeline(tracks, opts?) -> Track[]
+
+Export targets:
+    toGsap(sb, opts?)              -> string  (GSAP ScrollTrigger + Timeline JS)
+    toRig(sb, opts?)               -> string  (lite-scroll-rig-pro JS)
+
+Universal attach (auto-detects native support):
+    attachStoryboardRuntime(sb, opts?) -> { detach }
+
+## Design promises
+
+- Single-file ESM (~1750 LOC, ASCII-only source)
+- Zero runtime dependencies; optional peers: @zakkster/lite-ease (analytic
+  easings), @zakkster/lite-cubic-bezier (bezier runtime), @zakkster/lite-scroll-rig-pro
+- Zero-GC hot paths (compositor on native, pre-allocated Float64Array LUTs
+  on polyfill, no per-frame regex or string coercion)
+- MIT licensed; copyright "Zahary Shinikchiev <shinikchiev@yahoo.com>"
+
+## Storyboard shape
+
+    interface Storyboard {
+        timelines?: Record<string, {
+            attachedSelector: string,
+            kind: 'view' | 'scroll',
+            axis?: 'block' | 'inline' | 'x' | 'y',
+            scroller?: string
+        }>;
+        tracks: Track[];
+    }
+
+    interface Track {
+        selector: string;
+        timeline?: { kind?: 'view' | 'scroll', name?: string, axis?, scroller? };
+        range?:    { start?: string, end?: string };
+        keyframes: Keyframe[];
+        easing?:   string | ((t: number) => number);
+        fill?:     'none' | 'forwards' | 'backwards' | 'both';
+    }
+
+    Keyframes support: opacity, translateX/Y/Z, scale/scaleX/scaleY, rotate,
+    plus any CSS property name, plus CSS custom properties (--foo).
+
+## Range endpoint syntax
+
+    'entry 0%' ... 'entry 100%'      element enters the viewport
+    'contain 0%' ... 'contain 100%'  element wholly visible
+    'exit 0%' ... 'exit 100%'        element leaves the viewport
+    'cover 0%' ... 'cover 100%'      full sweep (entry + contain + exit)
+    '25%' / '100%'                   bare percentages (any timeline kind)
+
+## Testing (development)
+
+    npm test          # 115 tests, node:test only
+    npm run test:gc   # same suite with --expose-gc (zero-GC gate)
+
+## Ecosystem
+
+Companion packages:
+    @zakkster/lite-signal            reactive primitives
+    @zakkster/lite-ease              30 Penner easing functions
+    @zakkster/lite-cubic-bezier      zero-GC bezier runtime
+    @zakkster/lite-scroll-rig-pro    ScrollEngine + DOMScroller
+    @zakkster/lite-color-engine      OKLCH palette + interpolation
+    @zakkster/lite-charts            chart primitives (composable downstream)
+
+## License
+
+MIT © Zahary Shinikchiev <shinikchiev@yahoo.com>

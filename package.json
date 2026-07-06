@@ -1,0 +1,63 @@
+{
+  "name": "@zakkster/lite-scrollforge",
+  "version": "1.0.0",
+  "description": "Zero-GC, zero-dependency single-file ESM authoring layer for CSS Scroll-Driven Animations. Compile storyboards to native CSS, GSAP, or lite-scroll-rig-pro; polyfill runtime for older browsers.",
+  "type": "module",
+  "main": "./Scrollforge.js",
+  "module": "./Scrollforge.js",
+  "types": "./Scrollforge.d.ts",
+  "exports": {
+    ".": {
+      "types": "./Scrollforge.d.ts",
+      "node": "./Scrollforge.js",
+      "import": "./Scrollforge.js",
+      "default": "./Scrollforge.js"
+    },
+    "./llms.txt": "./llms.txt",
+    "./package.json": "./package.json"
+  },
+  "sideEffects": false,
+  "files": [
+    "Scrollforge.js",
+    "Scrollforge.d.ts",
+    "CHANGELOG.md",
+    "README.md",
+    "LICENSE.txt",
+    "llms.txt"
+  ],
+  "scripts": {
+    "test": "node --test --test-reporter=spec 'test/*.test.js'",
+    "test:gc": "node --expose-gc --test --test-reporter=spec 'test/*.test.js'",
+    "test:coverage": "node --experimental-test-coverage --test 'test/*.test.js'"
+  },
+  "keywords": [
+    "scroll",
+    "scroll-driven",
+    "animation",
+    "css",
+    "view-timeline",
+    "scroll-timeline",
+    "gsap",
+    "zero-gc",
+    "zero-dependency",
+    "single-file",
+    "esm"
+  ],
+  "author": "Zahary Shinikchiev <shinikchiev@yahoo.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PeshoVurtoleta/lite-scrollforge.git"
+  },
+  "bugs": {
+    "url": "https://github.com/PeshoVurtoleta/lite-scrollforge/issues"
+  },
+  "homepage": "https://github.com/PeshoVurtoleta/lite-scrollforge#readme",
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/PeshoVurtoleta"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
