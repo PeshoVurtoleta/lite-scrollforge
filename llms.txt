@@ -54,7 +54,7 @@ Universal attach (auto-detects native support):
 
 ## Design promises
 
-- Single-file ESM (~1750 LOC, ASCII-only source)
+- Single-file ESM (~2000 LOC, ASCII-only source)
 - Zero runtime dependencies; optional peers: @zakkster/lite-ease (analytic
   easings), @zakkster/lite-cubic-bezier (bezier runtime), @zakkster/lite-scroll-rig-pro
 - Zero-GC hot paths (compositor on native, pre-allocated Float64Array LUTs
@@ -95,8 +95,9 @@ Universal attach (auto-detects native support):
 
 ## Testing (development)
 
-    npm test          # 115 tests, node:test only
-    npm run test:gc   # same suite with --expose-gc (zero-GC gate)
+    npm test            # 134 tests, node:test only
+    npm run test:gc     # same suite with --expose-gc (zero-GC gate)
+    npm run test:torture # lite-gc-profiler + lite-leak allocation/retention gate
 
 ## Ecosystem
 
@@ -110,4 +111,4 @@ Companion packages:
 
 ## License
 
-MIT © Zahary Shinikchiev <shinikchiev@yahoo.com>
+MIT (c) Zahary Shinikchiev <shinikchiev@yahoo.com>
