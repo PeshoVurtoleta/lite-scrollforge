@@ -1,4 +1,4 @@
-// Type definitions for @zakkster/lite-scrollforge v1.0.0
+// Type definitions for @zakkster/lite-scrollforge v1.0.1
 // Zero-GC, zero-dependency authoring layer for CSS Scroll-Driven Animations.
 // Types match the .js exports set verbatim.
 

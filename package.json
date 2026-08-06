@@ -1,6 +1,6 @@
 {
   "name": "@zakkster/lite-scrollforge",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Zero-GC, zero-dependency single-file ESM authoring layer for CSS Scroll-Driven Animations. Compile storyboards to native CSS, GSAP, or lite-scroll-rig-pro; polyfill runtime for older browsers.",
   "type": "module",
   "main": "./Scrollforge.js",
@@ -28,7 +28,12 @@
   "scripts": {
     "test": "node --test --test-reporter=spec 'test/*.test.js'",
     "test:gc": "node --expose-gc --test --test-reporter=spec 'test/*.test.js'",
+    "test:torture": "node --expose-gc test/torture.mjs",
     "test:coverage": "node --experimental-test-coverage --test 'test/*.test.js'"
+  },
+  "devDependencies": {
+    "@zakkster/lite-gc-profiler": "^1.15.0",
+    "@zakkster/lite-leak": "^1.8.1"
   },
   "keywords": [
     "scroll",

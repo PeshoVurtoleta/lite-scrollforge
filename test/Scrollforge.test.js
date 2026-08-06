@@ -1372,8 +1372,18 @@ test('attachStoryboardRuntime: auto with HAS_NATIVE_SUPPORT=false uses polyfill'
 // which properties were set to what values.
 function _makeShimElement(selector, setters) {
     const el = {
+        // Layout position (transform-immune) used by the offsetTop-chain
+        // ticker. Tests drive progress by varying window.scrollY against a
+        // fixed offsetTop -- exactly what the real drive train reads.
+        offsetTop: 400,
+        offsetHeight: 100,
+        offsetParent: null,
+        parentElement: null,
         style: {
             transform: '',
+            translate: '',
+            scale: '',
+            rotate: '',
             setProperty(name, value) {
                 setters.push({ name, value });
                 el.style['__' + name] = value;
@@ -1383,24 +1393,57 @@ function _makeShimElement(selector, setters) {
             return { top: 400, bottom: 500, height: 100 };
         }
     };
-    // Numeric setters for a few common style props (used by
-    // _applyNumericProp for the direct-prop path).
     return el;
 }
 
-test('polyfill: IntersectionObserver callback drives style writes', () => {
+// Install a headless view-timeline environment on the globals the polyfill
+// reads. Returns handles that drive the hybrid model: `enter()`/`leave()`
+// flip the IO visibility gate; `scrollTo(y)` moves window.scrollY and flushes
+// the scheduled rAF -- one applied frame per call, exactly like a real scroll.
+function _installViewEnv(opts) {
+    opts = opts || {};
+    const selector = opts.selector || '.a';
     const setters = [];
-    const el = _makeShimElement('.card', setters);
-    let obsCb = null;
-    global.document = { querySelector: (s) => s === '.card' ? el : null };
-    global.window = {
-        innerHeight: 800,
-        addEventListener() {}, removeEventListener() {}
+    const el = _makeShimElement(selector, setters);
+    el.offsetTop = opts.offsetTop != null ? opts.offsetTop : 400;
+    el.offsetHeight = opts.elH != null ? opts.elH : 100;
+    let rafCb = null;
+    let ioCb = null;
+    const win = {
+        innerHeight: opts.viewportH != null ? opts.viewportH : 800,
+        scrollY: opts.scrollY != null ? opts.scrollY : 0,
+        _scroll: null,
+        addEventListener(t, cb) { if (t === 'scroll') win._scroll = cb; },
+        removeEventListener(t) { if (t === 'scroll') win._scroll = null; }
     };
+    global.document = { querySelector: (s) => (s === selector ? el : null) };
+    global.window = win;
+    global.requestAnimationFrame = (cb) => { rafCb = cb; return 1; };
+    global.cancelAnimationFrame = () => { rafCb = null; };
     global.IntersectionObserver = function (cb) {
-        obsCb = cb;
+        ioCb = cb;
         return { observe() {}, disconnect() {} };
     };
+    if (opts.individual !== false) global.CSS = { supports: () => true };
+    function flush() { if (rafCb) { const c = rafCb; rafCb = null; c(); } }
+    return {
+        el, setters, win,
+        enter() { if (ioCb) ioCb([{ intersectionRatio: 0.5 }]); flush(); },
+        leave() { if (ioCb) ioCb([{ intersectionRatio: 0 }]); },
+        scrollTo(y) { win.scrollY = y; if (win._scroll) win._scroll(); flush(); },
+        fireScroll() { if (win._scroll) win._scroll(); },
+        hasPendingRaf() { return rafCb != null; },
+        teardown() {
+            delete global.document; delete global.window;
+            delete global.requestAnimationFrame; delete global.cancelAnimationFrame;
+            delete global.IntersectionObserver; delete global.CSS;
+        }
+    };
+}
+
+test('polyfill: hybrid drive -- IO gate unparks, ticker writes styles', () => {
+    // offsetTop=400, viewportH=800, elH=100 -> raw = (800-400)/(800+100) = ~0.444
+    const env = _installViewEnv({ selector: '.card', viewportH: 800, elH: 100, offsetTop: 400 });
     try {
         attachStoryboardRuntime({
             tracks: [{
@@ -1414,31 +1457,24 @@ test('polyfill: IntersectionObserver callback drives style writes', () => {
             }]
         }, { runtime: 'polyfill' });
 
-        // Simulate an entry: element at top=400 (halfway through viewport).
-        // Cover progress ~= (800 - 400) / (800 + 100) = ~0.444
-        obsCb([{ boundingClientRect: { top: 400, bottom: 500, height: 100 } }]);
-        // Opacity was set somewhere in [0, 1] between the two keyframes.
-        const opacitySet = setters.find(s => s.name === 'opacity');
+        // The IO gate is a visibility gate ONLY: entering unparks and the
+        // ticker computes progress from layout position (offsetTop-chain).
+        env.enter();
+        const opacitySet = env.setters.find(s => s.name === 'opacity');
         assert.ok(opacitySet, 'opacity should have been set');
         const opacity = +opacitySet.value;
         assert.ok(opacity > 0 && opacity < 1,
-            'opacity should be strictly between 0 and 1 — got ' + opacity);
-        // Transform should have been assigned (translate component)
-        assert.match(el.style.transform, /translate\(/);
+            'opacity should be strictly between 0 and 1 -- got ' + opacity);
+        // Individual transform property written (SF-04), author transform untouched.
+        assert.match(env.el.style.translate, /px/);
     } finally {
-        delete global.document;
-        delete global.window;
-        delete global.IntersectionObserver;
+        env.teardown();
     }
 });
 
 test('polyfill: keyframe interpolation at endpoints matches (opacity 0 -> 1)', () => {
-    const setters = [];
-    const el = _makeShimElement('.p', setters);
-    let obsCb = null;
-    global.document = { querySelector: () => el };
-    global.window = { innerHeight: 100 };
-    global.IntersectionObserver = function (cb) { obsCb = cb; return { observe(){}, disconnect(){} }; };
+    // viewportH=100, elH=100, total=200, offsetTop=100 -> raw = scrollY/200.
+    const env = _installViewEnv({ selector: '.p', viewportH: 100, elH: 100, offsetTop: 100 });
     try {
         attachStoryboardRuntime({
             tracks: [{
@@ -1447,20 +1483,18 @@ test('polyfill: keyframe interpolation at endpoints matches (opacity 0 -> 1)', (
                 easing: 'linear'
             }]
         }, { runtime: 'polyfill' });
-        // Element top well below viewport (raw progress near 0)
-        obsCb([{ boundingClientRect: { top: 100, bottom: 200, height: 100 } }]);
-        const first = setters.filter(s => s.name === 'opacity').pop();
-        // Element top at negative (raw progress near 1)
-        setters.length = 0;
-        obsCb([{ boundingClientRect: { top: -100, bottom: 0, height: 100 } }]);
-        const last = setters.filter(s => s.name === 'opacity').pop();
-        // First reading should show near 0, last should show near 1.
+        env.enter();
+        // scrollY=0 -> raw ~0
+        env.scrollTo(0);
+        const first = env.setters.filter(s => s.name === 'opacity').pop();
+        // scrollY=200 -> raw ~1
+        env.setters.length = 0;
+        env.scrollTo(200);
+        const last = env.setters.filter(s => s.name === 'opacity').pop();
         assert.ok(+first.value < 0.1, 'expected ~0 at bottom of viewport, got ' + first.value);
         assert.ok(+last.value  > 0.9, 'expected ~1 at top of viewport, got ' + last.value);
     } finally {
-        delete global.document;
-        delete global.window;
-        delete global.IntersectionObserver;
+        env.teardown();
     }
 });
 
@@ -1485,16 +1519,19 @@ test('polyfill: element not found — track silently skipped', () => {
     }
 });
 
-test('polyfill: detach disconnects observer', () => {
+test('polyfill: detach disconnects observers and removes scroll listeners', () => {
     let disconnectedCount = 0;
+    let removedCount = 0;
     const el = _makeShimElement('.p', []);
     global.document = { querySelector: () => el };
-    global.window = { innerHeight: 800 };
-    global.IntersectionObserver = function (cb) {
-        return {
-            observe() {},
-            disconnect() { disconnectedCount++; }
-        };
+    global.window = {
+        innerHeight: 800, scrollY: 0,
+        addEventListener() {}, removeEventListener() { removedCount++; }
+    };
+    global.requestAnimationFrame = () => 1;
+    global.cancelAnimationFrame = () => {};
+    global.IntersectionObserver = function () {
+        return { observe() {}, disconnect() { disconnectedCount++; } };
     };
     try {
         const handle = attachStoryboardRuntime({
@@ -1506,10 +1543,13 @@ test('polyfill: detach disconnects observer', () => {
             ]
         }, { runtime: 'polyfill' });
         handle.detach();
-        assert.equal(disconnectedCount, 2);
+        assert.equal(disconnectedCount, 2, 'both IO gates disconnected');
+        assert.equal(removedCount, 2, 'both ticker scroll listeners removed');
     } finally {
         delete global.document;
         delete global.window;
+        delete global.requestAnimationFrame;
+        delete global.cancelAnimationFrame;
         delete global.IntersectionObserver;
     }
 });
@@ -1558,15 +1598,8 @@ test('polyfill: scroll timeline installs scroll listener + rAF', () => {
 });
 
 test('polyfill: CSS custom property gets setProperty(--foo, value)', () => {
-    const setters = [];
-    const el = _makeShimElement('.pill', setters);
-    let obsCb = null;
-    global.document = { querySelector: () => el };
-    global.window = { innerHeight: 800 };
-    global.IntersectionObserver = function (cb) {
-        obsCb = cb;
-        return { observe() {}, disconnect() {} };
-    };
+    // offsetTop=400, viewportH=800, elH=100 -> raw = ~0.444 (mid-range).
+    const env = _installViewEnv({ selector: '.pill', viewportH: 800, elH: 100, offsetTop: 400 });
     try {
         attachStoryboardRuntime({
             tracks: [{
@@ -1575,25 +1608,20 @@ test('polyfill: CSS custom property gets setProperty(--foo, value)', () => {
                 easing: 'linear'
             }]
         }, { runtime: 'polyfill' });
-        obsCb([{ boundingClientRect: { top: 400, bottom: 500, height: 100 } }]);
-        const hueSet = setters.find(s => s.name === '--hue');
+        env.enter();
+        const hueSet = env.setters.find(s => s.name === '--hue');
         assert.ok(hueSet, '--hue should have been set');
         const val = +hueSet.value;
         assert.ok(val > 20 && val < 240, 'value should interpolate between 20 and 240');
     } finally {
-        delete global.document;
-        delete global.window;
-        delete global.IntersectionObserver;
+        env.teardown();
     }
 });
 
 test('polyfill: easing preset (easeOutCubic) produces non-linear progress', () => {
-    const setters = [];
-    const el = _makeShimElement('.a', setters);
-    let obsCb = null;
-    global.document = { querySelector: () => el };
-    global.window = { innerHeight: 100 };
-    global.IntersectionObserver = function (cb) { obsCb = cb; return { observe(){}, disconnect(){} }; };
+    // viewportH=100, elH=100, total=200, offsetTop=100 -> raw = scrollY/200.
+    // scrollY=100 -> raw=0.5.
+    const env = _installViewEnv({ selector: '.a', viewportH: 100, elH: 100, offsetTop: 100, scrollY: 100 });
     try {
         attachStoryboardRuntime({
             tracks: [{
@@ -1602,27 +1630,18 @@ test('polyfill: easing preset (easeOutCubic) produces non-linear progress', () =
                 easing: 'easeOutCubic'
             }]
         }, { runtime: 'polyfill' });
-        // Position element to land at raw progress = 0.5:
-        // elH=100, viewportH=100, total=200. Progress = (100 - top) / 200.
-        // top = 0 -> progress = 0.5.
-        obsCb([{ boundingClientRect: { top: 0, bottom: 100, height: 100 } }]);
-        const op = +setters.filter(s => s.name === 'opacity').pop().value;
+        env.enter();   // ticks at scrollY=100 -> raw=0.5
+        const op = +env.setters.filter(s => s.name === 'opacity').pop().value;
         // For easeOutCubic at t=0.5, y = 1 - (1-0.5)^3 = 0.875.
         assert.ok(op > 0.8, 'easeOutCubic at t=0.5 should be ~0.875, got ' + op);
     } finally {
-        delete global.document;
-        delete global.window;
-        delete global.IntersectionObserver;
+        env.teardown();
     }
 });
 
 test('polyfill: multi-keyframe interpolates through the middle stop', () => {
-    const setters = [];
-    const el = _makeShimElement('.a', setters);
-    let obsCb = null;
-    global.document = { querySelector: () => el };
-    global.window = { innerHeight: 100 };
-    global.IntersectionObserver = function (cb) { obsCb = cb; return { observe(){}, disconnect(){} }; };
+    // viewportH=100, elH=100, total=200, offsetTop=100, scrollY=100 -> raw=0.5.
+    const env = _installViewEnv({ selector: '.a', viewportH: 100, elH: 100, offsetTop: 100, scrollY: 100 });
     try {
         attachStoryboardRuntime({
             tracks: [{
@@ -1635,26 +1654,21 @@ test('polyfill: multi-keyframe interpolates through the middle stop', () => {
                 easing: 'linear'
             }]
         }, { runtime: 'polyfill' });
-        // Position element to land at raw progress = 0.5 (matches offset 0.5 keyframe).
-        obsCb([{ boundingClientRect: { top: 0, bottom: 100, height: 100 } }]);
-        const transformStr = el.style.transform;
-        const match = /scale\(([-\d.]+),\s*([-\d.]+)\)/.exec(transformStr);
-        assert.ok(match, 'scale should be present in transform');
+        env.enter();   // ticks at raw=0.5, matches the offset 0.5 keyframe
+        // SF-04: individual `scale` property, not a transform string.
+        const match = /([-\d.]+)\s+([-\d.]+)/.exec(env.el.style.scale);
+        assert.ok(match, 'scale should be present as an individual property');
         assert.ok(+match[1] > 1.4, 'scale at middle keyframe should be ~1.5, got ' + match[1]);
     } finally {
-        delete global.document;
-        delete global.window;
-        delete global.IntersectionObserver;
+        env.teardown();
     }
 });
 
-test('polyfill: range mapping — entry 0-100% keeps animation in the early cover portion', () => {
-    const setters = [];
-    const el = _makeShimElement('.a', setters);
-    let obsCb = null;
-    global.document = { querySelector: () => el };
-    global.window = { innerHeight: 800 };
-    global.IntersectionObserver = function (cb) { obsCb = cb; return { observe(){}, disconnect(){} }; };
+test('polyfill: range mapping -- entry 0-100% keeps animation in the early cover portion', () => {
+    // elH=100, viewportH=800, entryFrac=100/900 ~= 0.111. offsetTop=755,
+    // scrollY=0 -> relTop=755 -> raw = (800-755)/900 = 0.05.
+    // p within entry range = 0.05/0.111 ~= 0.45.
+    const env = _installViewEnv({ selector: '.a', viewportH: 800, elH: 100, offsetTop: 755, scrollY: 0 });
     try {
         attachStoryboardRuntime({
             tracks: [{
@@ -1664,16 +1678,11 @@ test('polyfill: range mapping — entry 0-100% keeps animation in the early cove
                 easing: 'linear'
             }]
         }, { runtime: 'polyfill' });
-        // Element H=100, viewport H=800. entryFrac = 100/900 ≈ 0.111.
-        // At rawProgress = 0.05 (barely entered): p within entry range = 0.05/0.111 ≈ 0.45.
-        obsCb([{ boundingClientRect: { top: 755, bottom: 855, height: 100 } }]);
-        // rawProgress = (800 - 755) / (800 + 100) = 45/900 = 0.05
-        const op = +setters.filter(s => s.name === 'opacity').pop().value;
+        env.enter();
+        const op = +env.setters.filter(s => s.name === 'opacity').pop().value;
         assert.ok(op > 0.3 && op < 0.7,
             'opacity should be mid-range within entry, got ' + op);
     } finally {
-        delete global.document;
-        delete global.window;
-        delete global.IntersectionObserver;
+        env.teardown();
     }
 });

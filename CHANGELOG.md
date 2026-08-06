@@ -4,19 +4,62 @@ All notable changes to `@zakkster/lite-scrollforge` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [1.0.1] — 2026-07
+## [1.0.1] -- 2026-08-06
+
+The view-timeline polyfill drive train rewritten so progress is a pure function
+of scroll position -- never of IntersectionObserver callback timing, and never
+of the animated element's own transform output. Compile paths (native CSS,
+GSAP, rig) are unchanged.
 
 ### Fixed
 
-- **Polyfill: nested-scroller support.** When an animated element lives inside a
-  scrollable ancestor (`overflow: auto | scroll | overlay`), the polyfill now
-  correctly uses that ancestor as the IntersectionObserver `root` instead of
-  hardcoding the document viewport. Progress computation reads
-  `entry.rootBounds` (the actual scrollport rect) rather than
-  `window.innerHeight`, so animations inside modals, panels, or custom
-  scroll containers now match native `view()` semantics. The scroll fallback
-  path (for environments without `IntersectionObserver`) applies the same
-  detection and listens on the correct scroll target.
+- **Contain-phase freeze (SF-01).** The polyfill drove progress only from
+  IntersectionObserver callbacks, which fire only when the intersection ratio
+  crosses a threshold -- so progress stalled wherever the ratio was constant
+  while scroll continued (a short element fully in view, a tall element
+  covering the viewport: the middle of most `cover`-range storyboards).
+  IntersectionObserver is now a visibility gate only (one-threshold
+  hysteresis); a single scroll + `requestAnimationFrame` ticker computes
+  progress for both the observer and no-observer paths, applying a frame on
+  every scroll step through the entire contain phase.
+- **Transform feedback (SF-02).** Progress was measured with
+  `getBoundingClientRect`, which includes the track's own applied transform, so
+  an animated `translate` bent the very progress driving it. Progress is now
+  read from the element's `offsetTop` layout chain (transform-excluded).
+  Elements inside a scrollable ancestor are reconciled to the scroller's own
+  coordinate origin, fixing a silent clamp-to-0 on `position: static`
+  `overflow` scrollers (the common scroll-container shape).
+- **Tall subjects (SF-03).** When an element was taller than the scrollport the
+  `contain` range produced `rangeEnd < rangeStart` and progress pinned at 0.
+  Range endpoints now swap per the spec's tall-subject definition; the exact
+  `element height == viewport height` degenerate case resolves to a boundary
+  step, not stuck-at-zero. Covered by fixtures at 0.5x / 1x / 2x / 5x viewport.
+
+### Changed
+
+- **Individual transform properties (SF-04).** The polyfill now writes
+  `style.translate` / `style.rotate` / `style.scale` (composition order
+  translate -> rotate -> scale) -- the same individual properties the native
+  path animates -- leaving author transforms untouched. The single
+  `style.transform` string is retained only as a fallback behind a Transforms
+  Level 2 feature check.
+- Off-screen tracks are parked: zero `requestAnimationFrame` wake-ups while not
+  visible (gated at 0 ticks / 0 bytes-per-op).
+
+### Added
+
+- `test/torture.mjs` gate (lite-gc-profiler + lite-leak): per-frame write
+  ceiling (<= 1 string per changed non-transform property, <= 3 transform
+  strings), the pure interpolation path proven at 0 bytes/call, parked ticker
+  at 0 ticks / 0 bytes, and attach/detach x4096 with observer-orphan and
+  scroll-listener balance (net 0). Steady-state `_applyTrackFrame` measures
+  ~157 bytes/op -- one DOM-boundary string per changed property per frame, the
+  honest number, itemized in `decisions/0001-drive-model.md`.
+- `decisions/0001-drive-model.md`: the IntersectionObserver-as-gate drive
+  model, hysteresis, single-ticker path, the offsetTop ancestor-transform
+  limit, and the allocation-gate semantics.
+- devDependencies (dev-only, not shipped): `@zakkster/lite-gc-profiler
+  ^1.15.0`, `@zakkster/lite-leak ^1.8.1`.
 
 ## [1.0.0] — 2026-07
 

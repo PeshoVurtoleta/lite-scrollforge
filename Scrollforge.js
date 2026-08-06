@@ -1378,6 +1378,15 @@ function _computeRangeBoundsInto(parsedStart, parsedEnd, elH, viewportH, state) 
 }
 
 function _applyParsedRange(parsed, entryFrac, exitStart) {
+    // Identity: entryFrac + exitStart == 1 (elH/(S+E) + S/(S+E)). So entry
+    // spans [0, entryFrac] and exit spans [exitStart, 1] for ANY subject
+    // height -- neither needs a tall-subject swap. Only `contain` inverts:
+    // for a SHORT subject (elH < viewportH) entryFrac < exitStart and the
+    // element is fully CONTAINED across [entryFrac, exitStart]; for a TALL
+    // subject (elH > viewportH) exitStart < entryFrac and the element fully
+    // COVERS the scrollport across [exitStart, entryFrac]. The spec's
+    // tall-subject behavior is the endpoint swap: contain 0% == min, contain
+    // 100% == max -- never rangeEnd < rangeStart, never clamp-stuck-at-zero.
     const pct = parsed.pct;
     switch (parsed.kind) {
         case _RK_NONE:    return pct;
@@ -1385,7 +1394,11 @@ function _applyParsedRange(parsed, entryFrac, exitStart) {
         case _RK_COVER:   return pct;
         case _RK_ENTRY:   return pct * entryFrac;
         case _RK_EXIT:    return exitStart + pct * entryFrac;
-        case _RK_CONTAIN: return entryFrac + pct * (exitStart - entryFrac);
+        case _RK_CONTAIN: {
+            const lo = entryFrac < exitStart ? entryFrac : exitStart;
+            const hi = entryFrac < exitStart ? exitStart : entryFrac;
+            return lo + pct * (hi - lo);
+        }
         default:          return pct;
     }
 }
@@ -1398,6 +1411,19 @@ const _TRANSFORM_COMPONENTS = Object.freeze({
     translateX: true, translateY: true, translateZ: true,
     scale: true, scaleX: true, scaleY: true, rotate: true
 });
+
+/**
+ * Attach-time feature check for Transforms Level 2 individual transform
+ * properties (`translate:` / `scale:` / `rotate:`). True on the polyfill's
+ * actual audience (Firefox stable, Safari, Chrome 104+). When false, the
+ * frame loop falls back to the visually-divergent legacy `style.transform`
+ * string. Evaluated once per track at attach -- never in the frame loop.
+ */
+function _supportsIndividualTransforms() {
+    return typeof CSS !== 'undefined' &&
+        typeof CSS.supports === 'function' &&
+        CSS.supports('translate: 0px');
+}
 
 function _createTrackState(track) {
     const el = document.querySelector(track.selector);
@@ -1467,6 +1493,31 @@ function _createTrackState(track) {
         }
     }
 
+    // Cache the resolved CSS property NAME and unit for every numeric prop
+    // ONCE at attach (NIT 2). The frame loop then allocates exactly one string
+    // per changed property -- the VALUE -- never a second string for the
+    // kebab-cased name of an unmapped/custom prop. Transform components are
+    // flushed separately, so their slots stay null.
+    const numericCss  = new Array(numericProps.length);
+    const numericUnit = new Array(numericProps.length);
+    for (let i = 0; i < numericProps.length; i++) {
+        const name = numericProps[i];
+        if (_TRANSFORM_COMPONENTS[name] === true) { numericCss[i] = null; numericUnit[i] = ''; continue; }
+        if (name.startsWith('--')) { numericCss[i] = name; numericUnit[i] = ''; continue; }
+        const map = PROP_MAPPING[name];
+        if (map) { numericCss[i] = map.css; numericUnit[i] = map.unit || ''; }
+        else     { numericCss[i] = name.replace(KEBAB_REGEX, _kebabRepl); numericUnit[i] = ''; }
+    }
+    // Same for string props (mapped css is stable; kebab of an unmapped name
+    // is computed once here, not per frame).
+    const stringCss = new Array(stringProps.length);
+    for (let i = 0; i < stringProps.length; i++) {
+        const name = stringProps[i];
+        if (name.startsWith('--')) { stringCss[i] = name; continue; }
+        const map = PROP_MAPPING[name];
+        stringCss[i] = map ? map.css : name.replace(KEBAB_REGEX, _kebabRepl);
+    }
+
     // Pre-parse range endpoints ONCE. The hot path reads these compact
     // structs and does pure arithmetic -- no String() or regex per frame.
     const rangeSrc = track.range || null;
@@ -1483,11 +1534,17 @@ function _createTrackState(track) {
         offsets,
         numericProps,
         numericArrays,
+        numericCss,
+        numericUnit,
         stringProps,
         stringArrays,
+        stringCss,
         propsCount: numericProps.length + stringProps.length,
         easingFn: _parseEasingToFn(track.easing),
         fill: track.fill || 'both',
+        // Write half (SF-04): individual transform props vs legacy string,
+        // decided ONCE here at attach time -- never re-checked per frame.
+        useIndividual: _supportsIndividualTransforms(),
         // Runtime state:
         observer:  null,
         listener:  null,
@@ -1495,26 +1552,59 @@ function _createTrackState(track) {
         boundApply: null,
         rangeStart: 0,
         rangeEnd:   1,
-        // Scratch used by _applyTrackFrame to avoid per-frame allocation.
+        // Hybrid-drive state (SF-01): the IO visibility gate flips _gateOn and
+        // parks/unparks the ticker; _tickFn is the ticker's tick(), invoked on
+        // unpark for an immediate catch-up. _rootEl is set at install.
+        _parked:   false,
+        _gateOn:   false,
+        _tickFn:   null,
+        _rootEl:   undefined,
+        _scrollTarget: null,
+        // Pure-compute scratch (zero per-frame allocation): _computeFrame
+        // writes interpolated numeric values into _values (parallel to
+        // numericProps) and the located keyframe index into _kLo, and
+        // accumulates transform components into _scratch. The DOM-write half
+        // of _applyTrackFrame reads these; only the writes allocate strings.
+        _values: new Float64Array(numericProps.length),
+        _kLo: 0,
         _scratch: { tx: 0, ty: 0, sx: 1, sy: 1, rot: 0, hasTr: false, hasSc: false, hasRot: false }
     };
 }
 
-// Pre-allocate the IntersectionObserver threshold array once (256 slots
-// give ~0.4% resolution -- smoother than a typical monitor refresh).
-const _IO_THRESHOLDS = (() => {
-    const a = new Array(257);
-    for (let i = 0; i <= 256; i++) a[i] = i / 256;
-    return a;
-})();
+// IO is a visibility GATE ONLY (SF-01) -- it no longer drives progress, so
+// the old 257-slot resolution table is gone. The gate needs exactly two
+// thresholds: a park edge (_GATE_LO, fully off-screen) and an unpark edge
+// (_GATE_HI, meaningfully on-screen). The gap between them -- one IO
+// threshold wide (1/256) -- is the hysteresis that stops boundary jitter at a
+// single threshold from thrashing park/unpark.
+const _GATE_LO = 0;
+const _GATE_HI = 1 / 256;
+const _GATE_THRESHOLDS = [_GATE_LO, _GATE_HI];
 
-// --- Frame apply (called by observer callbacks) ---------------------
-function _applyTrackFrame(state, rawProgress) {
+// --- Frame apply (called by the ticker) -----------------------------
+// Split into two halves so the allocation story is honest and separately
+// gated (see decisions/0001-drive-model.md, "Allocation gate semantics"):
+//   _computeFrame -- PURE math: range mapping, easing, keyframe-interval
+//     location, numeric interpolation into pre-allocated scratch. ZERO
+//     allocation per call; gated at 0 B/op.
+//   _applyTrackFrame -- the DOM-write half. Reads the scratch and writes it
+//     out. Allocates exactly one string per changed property at the DOM
+//     boundary (unavoidable); gated by the per-frame ceiling and bytes/op +
+//     majors-per-KOp RATE, not an absolute major-GC count over a loop.
+function _computeFrame(state, rawProgress) {
     // Map raw [0, 1] progress through the range bounds.
     const span = state.rangeEnd - state.rangeStart;
-    let p = span > 0 ? (rawProgress - state.rangeStart) / span : 0;
-    if (p < 0) p = 0;
-    else if (p > 1) p = 1;
+    let p;
+    if (span > 0) {
+        p = (rawProgress - state.rangeStart) / span;
+        if (p < 0) p = 0;
+        else if (p > 1) p = 1;
+    } else {
+        // Degenerate zero-length range -- the 1x-viewport contain case where
+        // entryFrac == exitStart exactly. Resolve per spec as a step at the
+        // boundary: 0 before the point, 1 at/after it. NOT stuck-at-zero.
+        p = rawProgress < state.rangeStart ? 0 : 1;
+    }
     // Apply easing.
     const pE = state.easingFn(p);
 
@@ -1537,71 +1627,96 @@ function _applyTrackFrame(state, rawProgress) {
     sc.hasTr = false; sc.hasSc = false; sc.hasRot = false;
 
     // Numeric interpolation -- dense indexed loop over parallel arrays.
-    // Avoids for..in which V8 can't optimize as tightly.
-    const style = state.el.style;
+    // Values land in the pre-allocated _values buffer; transform components
+    // also accumulate into scratch. No style writes here -> no allocation.
     const numericProps  = state.numericProps;
     const numericArrays = state.numericArrays;
+    const values = state._values;
     const nNumeric = numericProps.length;
     for (let i = 0; i < nNumeric; i++) {
         const arr = numericArrays[i];
         const value = arr[kLo] + localT * (arr[kHi] - arr[kLo]);
-        _applyNumericProp(state, numericProps[i], value, style, sc);
+        values[i] = value;
+        const name = numericProps[i];
+        if (_TRANSFORM_COMPONENTS[name] === true) {
+            if (name === 'translateX') { sc.tx = value; sc.hasTr = true; }
+            else if (name === 'translateY') { sc.ty = value; sc.hasTr = true; }
+            else if (name === 'scale')      { sc.sx = value; sc.sy = value; sc.hasSc = true; }
+            else if (name === 'scaleX')     { sc.sx = value; sc.hasSc = true; }
+            else if (name === 'scaleY')     { sc.sy = value; sc.hasSc = true; }
+            else if (name === 'rotate')     { sc.rot = value; sc.hasRot = true; }
+        }
+    }
+    state._kLo = kLo;
+}
+
+function _applyTrackFrame(state, rawProgress) {
+    _computeFrame(state, rawProgress);   // pure, zero-allocation
+
+    // --- DOM-write half (the acknowledged per-frame string boundary) ---
+    // Exactly one allocated string per changed property: the VALUE. The CSS
+    // name + unit were resolved once at attach (state.numericCss/numericUnit).
+    const style = state.el.style;
+    const numericProps = state.numericProps;
+    const numericCss   = state.numericCss;
+    const numericUnit  = state.numericUnit;
+    const values = state._values;
+    const nNumeric = numericProps.length;
+    for (let i = 0; i < nNumeric; i++) {
+        if (_TRANSFORM_COMPONENTS[numericProps[i]] === true) continue;   // flushed below
+        const unit = numericUnit[i];
+        style.setProperty(numericCss[i], unit ? (values[i] + unit) : String(values[i]));
     }
     // String properties -- snap to the CURRENT keyframe (no interpolation).
-    const stringProps  = state.stringProps;
     const stringArrays = state.stringArrays;
-    const nString = stringProps.length;
+    const stringCss    = state.stringCss;
+    const kLo = state._kLo;
+    const nString = stringArrays.length;
     for (let i = 0; i < nString; i++) {
-        _applyStringProp(stringProps[i], stringArrays[i][kLo], style);
+        const v = stringArrays[i][kLo];
+        if (v != null) style.setProperty(stringCss[i], v);
     }
-    // Flush transform if any transform component was set.
-    if (sc.hasTr || sc.hasSc || sc.hasRot) {
+    // Flush transform if any transform component was set. SF-04: write the
+    // INDIVIDUAL Transforms Level 2 properties -- the same properties the
+    // native path animates -- in spec composition order translate -> rotate
+    // -> scale (the browser composes them in that order regardless of write
+    // order), leaving any author `transform` untouched. One allocated string
+    // per CHANGED component: at most three per frame.
+    const sc = state._scratch;
+    if (state.useIndividual) {
+        if (sc.hasTr)  style.translate = sc.tx + 'px ' + sc.ty + 'px';
+        if (sc.hasRot) style.rotate    = sc.rot + 'deg';
+        if (sc.hasSc)  style.scale     = sc.sx + ' ' + sc.sy;
+    } else if (sc.hasTr || sc.hasSc || sc.hasRot) {
+        // Legacy path -- browsers without Transforms Level 2 individual
+        // properties. A single `style.transform` string in spec composition
+        // order translate -> rotate -> scale. VISUALLY DIVERGENT LEGACY: this
+        // clobbers any author `transform`; the individual-property path above
+        // does not. Gated behind the attach-time feature check in
+        // _createTrackState (state.useIndividual).
         style.transform =
             (sc.hasTr  ? ('translate(' + sc.tx + 'px, ' + sc.ty + 'px)') : '') +
-            (sc.hasSc  ? (' scale(' + sc.sx + ', ' + sc.sy + ')') : '') +
-            (sc.hasRot ? (' rotate(' + sc.rot + 'deg)') : '');
+            (sc.hasRot ? (' rotate(' + sc.rot + 'deg)') : '') +
+            (sc.hasSc  ? (' scale(' + sc.sx + ', ' + sc.sy + ')') : '');
     }
-}
-
-function _applyNumericProp(state, propName, value, style, sc) {
-    // Transform components -> accumulate into scratch.
-    if (_TRANSFORM_COMPONENTS[propName] === true) {
-        if (propName === 'translateX') { sc.tx = value; sc.hasTr = true; }
-        else if (propName === 'translateY') { sc.ty = value; sc.hasTr = true; }
-        else if (propName === 'scale')      { sc.sx = value; sc.sy = value; sc.hasSc = true; }
-        else if (propName === 'scaleX')     { sc.sx = value; sc.hasSc = true; }
-        else if (propName === 'scaleY')     { sc.sy = value; sc.hasSc = true; }
-        else if (propName === 'rotate')     { sc.rot = value; sc.hasRot = true; }
-        return;
-    }
-    // CSS custom property.
-    if (propName.startsWith('--')) {
-        style.setProperty(propName, String(value));
-        return;
-    }
-    // Standard CSS numeric property.
-    const map = PROP_MAPPING[propName];
-    if (map) {
-        style.setProperty(map.css, map.unit ? (value + map.unit) : String(value));
-    } else {
-        // Unknown property -- write kebab-case, no unit.
-        const cssName = propName.replace(KEBAB_REGEX, _kebabRepl);
-        style.setProperty(cssName, String(value));
-    }
-}
-
-function _applyStringProp(propName, value, style) {
-    if (value == null) return;
-    if (propName.startsWith('--')) {
-        style.setProperty(propName, value);
-        return;
-    }
-    const map = PROP_MAPPING[propName];
-    const cssName = map ? map.css : propName.replace(KEBAB_REGEX, _kebabRepl);
-    style.setProperty(cssName, value);
 }
 
 // --- Observers ------------------------------------------------------
+
+/**
+ * Accumulate offsetTop up the offsetParent chain to the document root.
+ * Layout position, transform-immune for the node itself (the documented
+ * ancestor-transform limit still applies). Zero allocation -- a pointer walk
+ * over integers, called at most twice per scroll pass.
+ */
+function _offsetChainTop(node) {
+    let top = 0;
+    while (node) {
+        top += node.offsetTop || 0;
+        node = node.offsetParent;
+    }
+    return top;
+}
 
 /**
  * Find the nearest scrolling ancestor of `el`. Returns the element (or
@@ -1610,7 +1725,7 @@ function _applyStringProp(propName, value, style) {
  * ancestor with `overflow-y: auto | scroll | overlay` whose content
  * actually overflows.
  *
- * Called ONCE per track at attach — never in the frame loop.
+ * Called ONCE per track at attach -- never in the frame loop.
  */
 function _findNearestScroller(el) {
     if (typeof getComputedStyle === 'undefined') return null;
@@ -1629,60 +1744,9 @@ function _findNearestScroller(el) {
 
 function _installViewObserver(state) {
     const el = state.el;
-    if (typeof IntersectionObserver === 'undefined') {
-        // No IntersectionObserver -- fall back to scroll+rAF for view too.
-        return _installScrollFallbackForView(state);
-    }
-    // Detect the scrollport once. If the user gave an explicit scroller
-    // via track.timeline.scroller, honor it; otherwise auto-detect the
-    // nearest scrolling ancestor (matches native `view()` semantics).
-    let rootEl = null;
-    if (state.scroller && typeof document !== 'undefined') {
-        rootEl = document.querySelector(state.scroller);
-    }
-    if (!rootEl) rootEl = _findNearestScroller(el);
-    state._rootEl = rootEl;   // used by detach for scroll listener cleanup
-
-    const observer = new IntersectionObserver(function (entries) {
-        for (let i = 0; i < entries.length; i++) {
-            const entry = entries[i];
-            const rect = entry.boundingClientRect;
-            // Use the observer's own rootBounds when available. It reflects
-            // the scrollport's rect (root element's, or the document
-            // viewport if root is null). This is what makes the polyfill
-            // work correctly when the target lives inside a nested
-            // scrollable container.
-            const rootBounds = entry.rootBounds;
-            let viewportH, viewportTop;
-            if (rootBounds) {
-                viewportH = rootBounds.height;
-                viewportTop = rootBounds.top;
-            } else {
-                viewportH = (typeof window !== 'undefined' ? window.innerHeight : 0) || 0;
-                viewportTop = 0;
-            }
-            const elH = rect.height;
-            const total = viewportH + elH;
-            // Target-top position relative to the scrollport top, not the
-            // window. If the element is `display: none` / `visibility:
-            // hidden`, `rect.height` is 0 and `total` may be small; the
-            // `total > 0` guard prevents NaN. The animation appears stuck
-            // at rangeStart until the element is actually rendered --
-            // matches native CSS scroll-driven semantics.
-            const relTop = rect.top - viewportTop;
-            const traversed = viewportH - relTop;
-            const rawProgress = total > 0 ? traversed / total : 0;
-            _computeRangeBoundsInto(state.parsedRangeStart, state.parsedRangeEnd, elH, viewportH, state);
-            _applyTrackFrame(state, rawProgress);
-        }
-    }, { root: rootEl, threshold: _IO_THRESHOLDS });
-    observer.observe(el);
-    state.observer = observer;
-}
-
-function _installScrollFallbackForView(state) {
-    // For environments without IntersectionObserver: passive scroll + rAF.
-    const el = state.el;
+    // Detect the scrollport once, shared by the ticker and (when present) the
+    // IO visibility gate. Explicit `track.timeline.scroller` wins; otherwise
+    // auto-detect the nearest scrolling ancestor (matches native `view()`).
     let rootEl = null;
     if (state.scroller && typeof document !== 'undefined') {
         rootEl = document.querySelector(state.scroller);
@@ -1690,40 +1754,131 @@ function _installScrollFallbackForView(state) {
     if (!rootEl) rootEl = _findNearestScroller(el);
     state._rootEl = rootEl;
 
+    if (typeof IntersectionObserver === 'undefined') {
+        // No IntersectionObserver -- the ticker runs UNPARKED (always active).
+        // It is the single progress code path for both the IO and no-IO
+        // worlds; nothing else computes progress.
+        _installViewTicker(state, false);
+        return;
+    }
+
+    // IO becomes a VISIBILITY GATE ONLY (SF-01): it never computes progress.
+    // Attach the ticker PARKED, then let the gate unpark it on entry and park
+    // it on exit. Parked off-screen tracks cost zero rAF wake-ups; on-screen
+    // tracks tick every frame -- including the entire contain phase, where the
+    // intersection ratio is constant and the old IO-driven math froze.
+    _installViewTicker(state, true);
+    state._gateOn = false;
+
+    const observer = new IntersectionObserver(function (entries) {
+        for (let i = 0; i < entries.length; i++) {
+            const ratio = entries[i].intersectionRatio;
+            if (!state._gateOn) {
+                // Unpark once the element is meaningfully on-screen.
+                if (ratio >= _GATE_HI) { state._gateOn = true; _unparkTicker(state); }
+            } else {
+                // Park only once the element is fully off-screen. The
+                // _GATE_HI - _GATE_LO gap (one threshold) is the hysteresis.
+                if (ratio <= _GATE_LO) { state._gateOn = false; _parkTicker(state); }
+            }
+        }
+    }, { root: rootEl, threshold: _GATE_THRESHOLDS });
+    observer.observe(el);
+    state.observer = observer;
+}
+
+/** Unpark the ticker and immediately tick for a catch-up frame. */
+function _unparkTicker(state) {
+    state._parked = false;
+    if (typeof state._tickFn === 'function') state._tickFn();
+}
+
+/** Park the ticker and drop any pending rAF -- zero wake-ups off-screen. */
+function _parkTicker(state) {
+    state._parked = true;
+    if (state.rafHandle != null && typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(state.rafHandle);
+        state.rafHandle = null;
+    }
+}
+
+/**
+ * The single view-progress ticker (SF-01 / SF-02). Progress is a pure
+ * function of scroll position, computed from an offsetTop-chain accumulation
+ * walked ONCE per scroll pass -- never from getBoundingClientRect, so the
+ * track's OWN applied translate/scale/rotate cannot feed back into its
+ * measured progress. Known limit: offsetTop is layout, not visual, so a
+ * CSS-transformed ANCESTOR is not reflected here (see
+ * decisions/0001-drive-model.md). When `startParked` is true the ticker is
+ * dormant until the IO gate unparks it.
+ */
+function _installViewTicker(state, startParked) {
+    const el = state.el;
+    if (state._rootEl === undefined) {
+        let rootEl = null;
+        if (state.scroller && typeof document !== 'undefined') {
+            rootEl = document.querySelector(state.scroller);
+        }
+        if (!rootEl) rootEl = _findNearestScroller(el);
+        state._rootEl = rootEl;
+    }
+    const rootEl = state._rootEl;
+    state._parked = startParked === true;
     let pending = false;
+
     function tick() {
         pending = false;
-        const rect = el.getBoundingClientRect();
-        let viewportH, viewportTop;
+        state.rafHandle = null;
+        let viewportH, scrollPos, originTop;
         if (rootEl) {
-            const rb = rootEl.getBoundingClientRect();
-            viewportH = rb.height;
-            viewportTop = rb.top;
+            viewportH = rootEl.clientHeight || 0;
+            scrollPos = rootEl.scrollTop || 0;
+            // Reconcile to the scroller's OWN coordinate origin. A
+            // position:static overflow scroller -- the default scroll
+            // container -- is not a positioned ancestor, so offsetParent skips
+            // it and the element's chain runs past it to the document root.
+            // Accumulate the scroller to the same root and subtract, so
+            // chainTop and scrollPos share one origin. (A positioned scroller
+            // cancels identically -- its own offset appears in both walks.)
+            // Without this, a static scroller partway down the page pollutes
+            // relTop and clamps progress to 0 (the v1.0.0 rootBounds path
+            // handled this; see decisions/0001-drive-model.md).
+            originTop = _offsetChainTop(rootEl);
         } else {
             viewportH = (typeof window !== 'undefined' ? window.innerHeight : 0) || 0;
-            viewportTop = 0;
+            scrollPos = (typeof window !== 'undefined' ? window.scrollY : 0) || 0;
+            originTop = 0;
         }
-        const elH = rect.height;
+        // offsetTop chain: layout position of the element within the
+        // scrollport's content, accumulated once here per scroll pass. Pure
+        // number arithmetic + a pointer walk -- zero allocation.
+        const chainTop = _offsetChainTop(el);
+        const elH = el.offsetHeight || 0;
         const total = viewportH + elH;
-        const relTop = rect.top - viewportTop;
+        const relTop = chainTop - originTop - scrollPos;
         const traversed = viewportH - relTop;
         const raw = total > 0 ? traversed / total : 0;
         _computeRangeBoundsInto(state.parsedRangeStart, state.parsedRangeEnd, elH, viewportH, state);
         _applyTrackFrame(state, raw);
     }
     function onScroll() {
+        if (state._parked) return;   // parked off-screen -- zero rAF wake-ups
         if (pending) return;
         pending = true;
-        state.rafHandle = requestAnimationFrame(tick);
+        if (typeof requestAnimationFrame === 'function') {
+            state.rafHandle = requestAnimationFrame(tick);
+        } else {
+            tick();
+        }
     }
-    // Listen on the actual scroller (or window if root is null).
     const scrollTarget = rootEl || (typeof window !== 'undefined' ? window : null);
     if (scrollTarget) {
         scrollTarget.addEventListener('scroll', onScroll, { passive: true });
     }
     state.listener = onScroll;
     state._scrollTarget = scrollTarget;
-    tick();  // initial paint
+    state._tickFn = tick;
+    if (!state._parked) tick();   // initial paint
 }
 
 function _installScrollObserver(state) {
@@ -1812,7 +1967,13 @@ export function attachStoryboardRuntime(storyboard, opts) {
                 }
                 if (st.rafHandle != null && typeof cancelAnimationFrame === 'function') {
                     cancelAnimationFrame(st.rafHandle);
+                    st.rafHandle = null;
                 }
+                // Cancel the ticker and clear the park flag (SF-01 / task 5):
+                // park it so a late scroll event is a no-op, and drop the
+                // tick closure so nothing outlives the attachment.
+                st._parked = true;
+                st._tickFn = null;
             }
         }
     };
@@ -1821,3 +1982,21 @@ export function attachStoryboardRuntime(storyboard, opts) {
 // -------------------------------------------------------------------
 // End of Session 5 exports
 // -------------------------------------------------------------------
+
+// -------------------------------------------------------------------
+// Internal drive-train surface -- underscore-prefixed, NOT part of the
+// supported public API (absent from Scrollforge.d.ts on purpose). Exported
+// only so the SF0 fixtures and torture harness can pin the range math and the
+// write half directly against hand-derived bounds and a fake style sink.
+// -------------------------------------------------------------------
+export {
+    _parseRangeEndpoint,
+    _computeRangeBoundsInto,
+    _applyParsedRange,
+    _computeFrame,
+    _applyTrackFrame,
+    _createTrackState,
+    _installViewObserver,
+    _installViewTicker,
+    _supportsIndividualTransforms
+};
