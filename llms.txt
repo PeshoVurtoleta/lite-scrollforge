@@ -59,6 +59,8 @@ Universal attach (auto-detects native support):
   easings), @zakkster/lite-cubic-bezier (bezier runtime), @zakkster/lite-scroll-rig-pro
 - Zero-GC hot paths (compositor on native, pre-allocated Float64Array LUTs
   on polyfill, no per-frame regex or string coercion)
+- Native parity proven: an oracle diffs the polyfill against the real Chromium
+  engine per property in CI (see decisions/0003-parity.md)
 - MIT licensed; copyright "Zahary Shinikchiev <shinikchiev@yahoo.com>"
 
 ## Storyboard shape
@@ -98,6 +100,10 @@ Universal attach (auto-detects native support):
     npm test            # 134 tests, node:test only
     npm run test:gc     # same suite with --expose-gc (zero-GC gate)
     npm run test:torture # lite-gc-profiler + lite-leak allocation/retention gate
+    npm run test:emitter # toGsap/toRig snapshots + parse gate
+    npm run test:scorer  # oracle scorer fail-closed contract (headless)
+    npm run test:browser # native-parity oracle: polyfill vs native in real Chromium
+    npm run verify       # every lane in sequence -- the publish gate
 
 ## Ecosystem
 

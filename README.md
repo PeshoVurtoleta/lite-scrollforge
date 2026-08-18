@@ -10,21 +10,22 @@
 ![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
-**Zero-GC · zero-dependency · single-file ESM.**
+**Zero-GC | zero-dependency | single-file ESM.**
 
 A CSS Scroll-Driven Animation authoring layer. Author animations as a
 config object; compile to native CSS, GSAP, or `@zakkster/lite-scroll-rig-pro`;
 drop in the polyfill runtime for browsers without native support.
 
-- **~1750 LOC, one file, ASCII source.** No transpile step, no bundler
+- **~2000 LOC, one file, ASCII source.** No transpile step, no bundler
   required, no runtime dependencies.
 - **15 exports.** Covers CSS emission, easing math, sequencing, three export
   targets, and a universal attach entry point.
 - **Zero-GC hot path.** Compositor-driven on native browsers; pre-allocated
   `Float64Array` LUTs, integer switch dispatch on parsed range endpoints,
   and one style-write per element per frame on the polyfill.
-- **115 tests, `node:test` only.** Both `npm test` and
-  `npm run test:gc` (`--expose-gc`) pass.
+- **134-test core suite, `node:test` only.** `npm test` and `npm run test:gc`
+  (`--expose-gc`) pass; on top, a real-Chromium native-parity oracle plus
+  headless scorer and emitter lanes gate every publish (`npm run verify`).
 
 ```bash
 npm i @zakkster/lite-scrollforge
@@ -80,9 +81,9 @@ handle.detach();
 CSS Scroll-Driven Animations tie the progress of a CSS animation to scroll
 position instead of wall-clock time. There are two flavors:
 
-- **View timeline** — progress driven by an element's position in the
+- **View timeline** -- progress driven by an element's position in the
   viewport. Ranges: `entry`, `contain`, `exit`, `cover`.
-- **Scroll timeline** — progress driven by a scroll container's scroll
+- **Scroll timeline** -- progress driven by a scroll container's scroll
   position. Ranges: bare percentages.
 
 Native support is baseline-ish (Chrome 115+, Edge 115+, Opera 101+).
@@ -147,7 +148,7 @@ const handle = attachStoryboard(storyboard);
 // -> { detach(), styleElement }
 ```
 
-`attachStoryboard` is the **native-only** path — zero JS in the animation
+`attachStoryboard` is the **native-only** path -- zero JS in the animation
 loop, the compositor handles everything. Use `attachStoryboardRuntime` when
 you want the polyfill fallback.
 
@@ -187,7 +188,7 @@ Three ways to specify an easing on a track:
 { easing: 'linear(0, 0.5, 1)' }
 ```
 
-**A function `(t) => number`** — including analytic easings from
+**A function `(t) => number`** -- including analytic easings from
 `@zakkster/lite-ease` that can't be represented as a single cubic-bezier:
 
 ```js
@@ -280,7 +281,7 @@ export function attachScrollAnimations() {
 }
 ```
 
-Property renames applied (`translateX → x`, `rotate → rotation`), 27-entry
+Property renames applied (`translateX -> x`, `rotate -> rotation`), 27-entry
 easing map to GSAP built-ins. Raw `cubic-bezier(...)` and function easings
 emit with a `/* needs CustomEase */` marker.
 
@@ -293,32 +294,32 @@ console.log(toRig(storyboard));
 
 Rig supports 4 property slots per element (translateX / translateY / scale /
 rotate). Other props emit as a "dropped" comment. Range endpoints pre-scale
-into the rig's `t ∈ [0, 1]` axis (cover exact; entry/exit approximated at
+into the rig's `t in [0, 1]` axis (cover exact; entry/exit approximated at
 0.5-split with a warning).
 
 ## Ecosystem composition
 
 Scrollforge is one piece of the `@zakkster/*` ecosystem. Composition
-happens through userland — Scrollforge itself ships with zero runtime
+happens through userland -- Scrollforge itself ships with zero runtime
 dependencies.
 
-- **`@zakkster/lite-ease`** — 30 Penner easing functions. Robert Penner
+- **`@zakkster/lite-ease`** -- 30 Penner easing functions. Robert Penner
   himself starred it. Pass its functions directly to any easing-accepting
   Scrollforge API; analytic curves (Bounce, Elastic) that cubic-bezier
   can't represent get emitted as CSS `linear(...)` automatically.
-- **`@zakkster/lite-cubic-bezier`** — zero-GC bezier runtime with a DoD
+- **`@zakkster/lite-cubic-bezier`** -- zero-GC bezier runtime with a DoD
   coefficient compiler. Scrollforge ships an inline evaluator to preserve
   its zero-dep promise; use lite-cubic-bezier when you need shared curve
   state across multiple contexts.
-- **`@zakkster/lite-scroll-rig-pro`** — target of `toRig()`.
-- **`@zakkster/lite-signal`** — reactive primitives. Wire Scrollforge into
+- **`@zakkster/lite-scroll-rig-pro`** -- target of `toRig()`.
+- **`@zakkster/lite-signal`** -- reactive primitives. Wire Scrollforge into
   a reactive UI: signals drive the storyboard config, effects detach +
   reattach on config changes.
-- **`@zakkster/lite-color-engine`** — pair with `--custom-properties` in
+- **`@zakkster/lite-color-engine`** -- pair with `--custom-properties` in
   keyframes to animate OKLCH color space parameters, downstream CSS uses
   `color: oklch(var(--l) var(--c) var(--h))`.
 
-Example — animating a color via a custom property, with lite-color-engine
+Example -- animating a color via a custom property, with lite-color-engine
 consuming it downstream:
 
 ```js
@@ -351,10 +352,10 @@ No JS runs during scroll.
 
 **Polyfill path.** Every allocation-risk was audited and eliminated:
 
-- **Range endpoints parsed once at attach.** `'entry 25%'` → `{ kind: 3, pct: 0.25 }`.
+- **Range endpoints parsed once at attach.** `'entry 25%'` -> `{ kind: 3, pct: 0.25 }`.
   Hot-path resolution is an integer switch, not a string compare or regex.
 - **Parallel arrays instead of `for..in`.** Keyframe values stored as parallel
-  `Float64Array` + `string[]` arrays. Hot loop is a dense indexed `for` —
+  `Float64Array` + `string[]` arrays. Hot loop is a dense indexed `for` --
   V8 keeps it monomorphic.
 - **`_computeRangeBoundsInto()` writes into state.** Mutates
   `state.rangeStart` / `state.rangeEnd` directly rather than returning a
@@ -366,7 +367,7 @@ No JS runs during scroll.
   pre-allocated once at module load, shared across every polyfilled track.
 
 The single unavoidable per-frame allocation is the `element.style.transform`
-string when any transform component changes — a DOM boundary that requires
+string when any transform component changes -- a DOM boundary that requires
 a string. This is the theoretical minimum for JS-driven CSS animation.
 
 ## Browser support
@@ -381,7 +382,7 @@ a string. This is the theoretical minimum for JS-driven CSS animation.
 | Firefox | Behind flag |
 | Safari  | In progress |
 
-**Polyfill path** — anywhere `IntersectionObserver` is available (all
+**Polyfill path** -- anywhere `IntersectionObserver` is available (all
 evergreen browsers, IE11 with polyfill). Also transparently falls back to
 passive-scroll + `getBoundingClientRect()` if `IntersectionObserver` is
 missing.
@@ -410,12 +411,23 @@ Full TypeScript declarations live in `Scrollforge.d.ts`. Summary:
 
 ## Testing
 
+`node:test` only -- no test-framework dependency. Beyond the core suite, a
+native-parity oracle mounts every storyboard in real Chromium and diffs the
+polyfill against the native engine per property; its scorer fails closed and is
+unit-tested headless. Method, tolerances, and the divergence table live in
+[`decisions/0003-parity.md`](decisions/0003-parity.md).
+
 ```bash
-npm test              # 115 tests
-npm run test:gc       # same suite with --expose-gc
-npm run test:coverage # node's built-in coverage
+npm test               # 134 tests, node:test only
+npm run test:gc        # same suite with --expose-gc (zero-GC gate)
+npm run test:torture   # lite-gc-profiler + lite-leak allocation/retention gate
+npm run test:emitter   # toGsap/toRig snapshots + parse gate (2 tests)
+npm run test:scorer    # oracle scorer fail-closed contract, headless (15 tests)
+npm run test:browser   # native-parity oracle in real Chromium (needs Playwright)
+npm run verify         # every lane in sequence -- the publish gate
+npm run test:coverage  # node's built-in coverage
 ```
 
 ## License
 
-MIT © [Zahary Shinikchiev](mailto:shinikchiev@yahoo.com)
+MIT (c) [Zahary Shinikchiev](mailto:shinikchiev@yahoo.com)

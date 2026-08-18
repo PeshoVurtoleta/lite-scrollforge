@@ -29,11 +29,17 @@
     "test": "node --test --test-reporter=spec 'test/*.test.js'",
     "test:gc": "node --expose-gc --test --test-reporter=spec 'test/*.test.js'",
     "test:torture": "node --expose-gc test/torture.mjs",
-    "test:coverage": "node --experimental-test-coverage --test 'test/*.test.js'"
+    "test:coverage": "node --experimental-test-coverage --test 'test/*.test.js'",
+    "test:emitter": "node --test test/browser/emitter.test.mjs",
+    "test:scorer": "node --test test/browser/scorer.test.mjs",
+    "test:browser": "node --test test/browser/oracle.test.mjs",
+    "verify": "npm run test && npm run test:torture && npm run test:emitter && npm run test:scorer && npm run test:browser"
   },
   "devDependencies": {
+    "@zakkster/lite-ease": "^1.1.0",
     "@zakkster/lite-gc-profiler": "^1.15.0",
-    "@zakkster/lite-leak": "^1.8.1"
+    "@zakkster/lite-leak": "^1.8.1",
+    "playwright": "^1.62.1"
   },
   "keywords": [
     "scroll",
