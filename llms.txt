@@ -58,7 +58,15 @@ Universal attach (auto-detects native support):
 - Zero runtime dependencies; optional peers: @zakkster/lite-ease (analytic
   easings), @zakkster/lite-cubic-bezier (bezier runtime), @zakkster/lite-scroll-rig-pro
 - Zero-GC hot paths (compositor on native, pre-allocated Float64Array LUTs
-  on polyfill, no per-frame regex or string coercion)
+  on polyfill, no per-frame regex or string coercion). A per-property
+  dirty-check writes at most one string per CHANGED property per frame; an
+  unchanged property (or a track clamped at a range endpoint) writes nothing
+  and allocates nothing.
+- Fail closed: attachStoryboardRuntime throws a named error on a selector that
+  matches no element (no silent skip; the whole attach aborts side-effect-free).
+  sequenceOnTimeline needs >= 2 tracks and overlap in [0, 1).
+- detach restores each subject's pre-attach inline style, so a polyfill
+  attach/detach cycle converges byte-equal with native's <style>-removal.
 - Native parity proven: an oracle diffs the polyfill against the real Chromium
   engine per property in CI (see decisions/0003-parity.md)
 - MIT licensed; copyright "Zahary Shinikchiev <shinikchiev@yahoo.com>"
@@ -97,7 +105,7 @@ Universal attach (auto-detects native support):
 
 ## Testing (development)
 
-    npm test            # 145 tests, node:test only (2 gc-gated, run under test:gc)
+    npm test            # 147 tests, node:test only (3 gc-gated, run under test:gc)
     npm run test:gc     # whole suite with --expose-gc (zero-GC gate)
     npm run test:torture # lite-gc-profiler + lite-leak allocation/retention gate
     npm run test:ceilings # hot-path allocation ceilings + a failing control

@@ -360,15 +360,49 @@ No JS runs during scroll.
 - **`_computeRangeBoundsInto()` writes into state.** Mutates
   `state.rangeStart` / `state.rangeEnd` directly rather than returning a
   fresh `{ start, end }` object each observer tick.
-- **Transform scratch object.** Transform components (translateX, scale,
-  rotate) aggregate into a persistent `_scratch` struct at module scope;
-  flushed as a single `style.transform` string write per element per frame.
-- **`_IO_THRESHOLDS`.** 257-slot `IntersectionObserver` threshold array
-  pre-allocated once at module load, shared across every polyfilled track.
+- **Transform scratch object.** Transform components (translateX/Y/Z, scale,
+  rotate) aggregate into a persistent `_scratch` struct on the track state;
+  flushed as the individual Transforms Level 2 `style.translate` /
+  `style.rotate` / `style.scale` properties (the same ones the native path
+  animates), never rebuilt objects.
+- **IntersectionObserver is a two-threshold visibility gate.** The observer
+  parks/unparks the ticker on entry/exit; it does not compute progress and
+  holds no per-track resolution table. Off-screen tracks cost zero rAF
+  wake-ups.
 
-The single unavoidable per-frame allocation is the `element.style.transform`
-string when any transform component changes -- a DOM boundary that requires
-a string. This is the theoretical minimum for JS-driven CSS animation.
+### The per-frame write budget (SF-06)
+
+The only per-frame allocation is the DOM-boundary string, and it fires **only
+when a value changes**. A per-property last-written cache (`_lastNum` /
+`_lastStr` / the transform scalars, all sentinel-initialized so the first frame
+after attach always writes) is compared before each write; on equality the
+write is skipped and no string is built. A track clamped at a range endpoint is
+fully silent -- 0 writes, 0 bytes. The numbers below are what the committed
+ceilings lane (`npm run test:ceilings`) and torture harness actually measure:
+
+| write | strings when CHANGED | strings when UNCHANGED |
+|---|---|---|
+| each numeric non-transform prop (`opacity`, a custom `--x`, ...) | 1 (the value) | 0 |
+| each string-valued prop (`color`, `filter`, ...) | 1 (keyframe value) | 0 |
+| `translate` (from `translateX/Y/Z`) | 1 (combined) | 0 |
+| `rotate` | 1 | 0 |
+| `scale` (from `scale`/`scaleX`/`scaleY`) | 1 (combined) | 0 |
+
+At most **one string per changed property per element per frame**, at most
+**three transform strings** total (translate + rotate + scale). The resolved
+CSS property name and unit are cached once at attach, so a changed property
+pays for its value string only, never a second string for its name.
+
+Measured (gated, never widened to pass):
+
+- **Repeated-identical frame:** 0 strings, **0 B/op**, 0 major GC.
+- **Changing-frame steady state** (the quick-start track: `opacity` +
+  `translateX/Y` + `scale` + `rotate` = 4 changed strings/frame): **~158 B/op**,
+  committed ceiling 512 B/op, 0 majors per kOp.
+- **Varying control** (2 numeric + 3 transform changing every frame):
+  exactly 5 strings/frame.
+- **Pure compute** (`_computeFrame`: range map, easing, interpolation into
+  pre-allocated scratch): **0 B/call**.
 
 ## Browser support
 

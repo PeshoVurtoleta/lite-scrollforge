@@ -4,13 +4,58 @@ All notable changes to `@zakkster/lite-scrollforge` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.2.0] -- 2026-09-13
 
-Repo-only tooling and examples borrowed from the `@zakkster/lite-scroll-rig-pro`
-playbook. No runtime code changed and nothing new ships: `recipes/`, `demo/`,
-and the added tests are not in `package.json` `files[]`.
+The first hot-path change to `Scrollforge.js` since 1.0.1: a per-frame write
+dirty-check, a detach that restores the pre-attach inline style, and fail-closed
+attach and `resetKeyframeCounter`. Repo-only tooling and examples from the
+`@zakkster/lite-scroll-rig-pro` playbook are included below.
+
+### Changed
+
+- **Dirty-check on the write half (SF-06).** `_applyTrackFrame` now compares
+  each interpolated value against a per-property last-written cache
+  (`_lastNum` / `_lastStr` / the transform scalars, all sentinel-initialized so
+  the first frame after attach always writes -- null is not zero). An unchanged
+  property is skipped WITHOUT building its string; a track clamped at a range
+  endpoint writes nothing (0 writes, 0 B/op). This changes only WHEN writes
+  fire, never the final computed style -- the native-parity oracle's
+  maxDev/rmsDev are unchanged (byte-identical).
+- **detach restores the pre-attach inline style.** attach snapshots each
+  subject's touched inline properties once (cold); detach restores them and
+  invalidates the caches, so a polyfill attach/detach cycle converges
+  byte-equal with native's `<style>`-removal end state.
+- **resetKeyframeCounter fails closed while a runtime is attached.** It now
+  throws a named error instead of silently resetting the keyframe-name counter,
+  which could collide generated `@keyframes` names on a later attach. A
+  cold-path live-attachment counter tracks this at zero hot-path cost, and
+  detach is idempotent. **BREAKING:** the call was previously an unconditional
+  reset. See `decisions/0002-detach.md`.
+- **attachStoryboardRuntime fails closed on an unresolved selector.** A
+  selector matching no element now throws a named error (naming the selector
+  and track index) instead of silently skipping the track. Every track is
+  resolved before any observer/listener is installed, so an aborted attach
+  leaves ZERO side effects. See `decisions/0002-detach.md`.
+- **sequenceOnTimeline precise named errors.** Rejects a single track (needs
+  `>= 2` to distribute), a non-numeric/`NaN`/out-of-`[0, 1)` `overlap`, and
+  `endPct <= startPct`, each with a value-bearing message. **BREAKING:** a
+  single-track call previously returned one full-range slot; it now throws.
+
+### Fixed
+
+- **Redundant per-frame DOM writes.** Tracks parked at a range endpoint or on
+  an easing plateau previously re-emitted byte-identical strings every frame;
+  they now allocate and write nothing until a value moves.
 
 ### Added
+
+- **Dirty-check test lane.** `test/ceilings.test.js` and `test/torture.mjs`
+  gain a lane proving repeated-identical frames write 0 (and allocate 0 B/call)
+  while a varying control still writes every changed property (5 strings/frame
+  x 1000). `sequenceOnTimeline` and fail-closed attach get node:test coverage.
+- **`decisions/0002-detach.md`.** Records the dirty-check, the restore-prior
+  detach policy, the author-mutated-inline-style owned-property limit, and the
+  fail-closed-vs-warn-once rationale.
 
 - **Recipe tier (`recipes/` + `test/recipes.test.js`).** Runnable
   ecosystem-wiring examples -- `gsap-export`, `rig-export`, `ease-curve`

@@ -311,7 +311,10 @@ test('SF-03 fixture: 1x-viewport degenerate contain resolves per spec, not stuck
         stringProps: [], stringArrays: [], stringCss: [], useIndividual: false,
         el: { style: { setProperty() {}, transform: '' } },
         _values: new Float64Array(1), _kLo: 0,
-        _scratch: { tx: 0, ty: 0, sx: 1, sy: 1, rot: 0, hasTr: false, hasSc: false, hasRot: false } };
+        _scratch: { tx: 0, ty: 0, sx: 1, sy: 1, rot: 0, hasTr: false, hasSc: false, hasRot: false },
+        // SF-06 dirty-check caches (see _createTrackState) -- sentinel-initialized.
+        _lastNum: new Float64Array(1).fill(NaN), _lastStr: [],
+        _lastTx: NaN, _lastTy: NaN, _lastSx: NaN, _lastSy: NaN, _lastRot: NaN };
 
     const ps = _parseRangeEndpoint('contain 0%', 0);
     const pe = _parseRangeEndpoint('contain 100%', 1);

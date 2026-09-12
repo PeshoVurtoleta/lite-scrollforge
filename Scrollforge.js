@@ -204,11 +204,29 @@ export const HAS_NATIVE_SUPPORT = (typeof CSS !== 'undefined' &&
 // -------------------------------------------------------------------
 let _kfCounter = 0;
 
+// Count of runtime attachments currently live (native <style> injections AND
+// polyfill JS drivers -- ALL of them; see decisions/0002-detach.md). Cold-path
+// ONLY: incremented after an attach fully succeeds, decremented once per handle
+// on the first detach. NEVER read or written by _applyTrackFrame or any
+// per-frame code -- it costs zero hot-path state.
+let _liveAttachments = 0;
+
 /**
  * Reset the keyframe-name counter. Call before a batch of trackToCss
  * calls if you need byte-stable output for golden-file testing.
+ *
+ * Fails closed (Law: fail closed on every unverified state) while any runtime
+ * is attached: resetting the shared @keyframes-naming counter mid-attach would
+ * make a later emission collide with names a live attachment may still depend
+ * on for regeneration. Detach first. See decisions/0002-detach.md.
  */
-export function resetKeyframeCounter() { _kfCounter = 0; }
+export function resetKeyframeCounter() {
+    if (_liveAttachments > 0) {
+        throw new Error('resetKeyframeCounter: cannot reset while ' + _liveAttachments +
+            ' runtime(s) are attached; detach first');
+    }
+    _kfCounter = 0;
+}
 
 // -------------------------------------------------------------------
 // Kebab-case conversion -- hoisted so V8 doesn't recompile the regex on
@@ -537,15 +555,27 @@ export function sequenceOnTimeline(tracks, opts) {
     if (!Array.isArray(tracks) || tracks.length === 0) {
         throw new TypeError('sequenceOnTimeline: tracks must be a non-empty array');
     }
+    if (tracks.length === 1) {
+        // Distributing one track along a timeline is a no-op that almost always
+        // means the caller meant to pass more. Fail closed (Law) rather than
+        // return a single full-range slot that silently hides the mistake.
+        throw new RangeError('sequenceOnTimeline: needs >= 2 tracks to distribute ' +
+            'along a timeline, got 1 -- a single track already spans the full ' +
+            'range; use it directly without sequenceOnTimeline');
+    }
     opts = opts || {};
     const overlap = opts.overlap == null ? 0 : opts.overlap;
-    if (overlap < 0 || overlap >= 1) {
-        throw new RangeError('sequenceOnTimeline: overlap must be in [0, 1)');
+    if (typeof overlap !== 'number' || Number.isNaN(overlap) || overlap < 0 || overlap >= 1) {
+        // Valid overlap is [0, 1): 0 = hard cuts, approaching 1 = full crossfade.
+        // 1 and > 1 would overlap a slot past its neighbors entirely; < 0 is
+        // nonsensical. Each is out of range for the same reason.
+        throw new RangeError('sequenceOnTimeline: overlap must be a number in [0, 1), got ' + overlap);
     }
     const startPct = opts.startPct == null ? 0   : opts.startPct;
     const endPct   = opts.endPct   == null ? 100 : opts.endPct;
     if (endPct <= startPct) {
-        throw new RangeError('sequenceOnTimeline: endPct must be > startPct');
+        throw new RangeError('sequenceOnTimeline: endPct (' + endPct +
+            ') must be > startPct (' + startPct + ')');
     }
     const rangeName = opts.rangeName || null;
 
@@ -605,9 +635,14 @@ export function attachStoryboard(storyboard, root) {
     style.setAttribute('data-scrollforge', 'true');
     style.textContent = css;
     target.appendChild(style);
+    _liveAttachments++;   // cold: attach fully succeeded (the <style> is in the DOM)
+    let detached = false;
     return {
         styleElement: style,
         detach() {
+            if (detached) return;   // idempotent: a second detach is a no-op
+            detached = true;
+            _liveAttachments--;
             if (style.parentNode) style.parentNode.removeChild(style);
         }
     };
@@ -1518,6 +1553,25 @@ function _createTrackState(track) {
         stringCss[i] = map ? map.css : name.replace(KEBAB_REGEX, _kebabRepl);
     }
 
+    // SF-06: snapshot the touched inline style props ONCE at attach (cold
+    // setup cost, allowed). detach restores these so the polyfill converges
+    // BYTE-EQUAL with the native <style>-removal end state, which never mutates
+    // inline style. null is not zero: a prop the element did not already carry
+    // is snapshotted as '' and RESTORED via removeProperty on detach, never
+    // left as a stale runtime write. Transform component slots stay null (they
+    // are flushed through style.translate/rotate/scale, restored separately).
+    const _snapStyle = el.style;
+    const _hasGet = typeof _snapStyle.getPropertyValue === 'function';
+    const snapNumeric = new Array(numericProps.length);
+    for (let i = 0; i < numericProps.length; i++) {
+        if (_TRANSFORM_COMPONENTS[numericProps[i]] === true) { snapNumeric[i] = null; continue; }
+        snapNumeric[i] = _hasGet ? _snapStyle.getPropertyValue(numericCss[i]) : '';
+    }
+    const snapString = new Array(stringProps.length);
+    for (let i = 0; i < stringProps.length; i++) {
+        snapString[i] = _hasGet ? _snapStyle.getPropertyValue(stringCss[i]) : '';
+    }
+
     // Pre-parse range endpoints ONCE. The hot path reads these compact
     // structs and does pure arithmetic -- no String() or regex per frame.
     const rangeSrc = track.range || null;
@@ -1567,8 +1621,63 @@ function _createTrackState(track) {
         // of _applyTrackFrame reads these; only the writes allocate strings.
         _values: new Float64Array(numericProps.length),
         _kLo: 0,
-        _scratch: { tx: 0, ty: 0, sx: 1, sy: 1, rot: 0, hasTr: false, hasSc: false, hasRot: false }
+        _scratch: { tx: 0, ty: 0, sx: 1, sy: 1, rot: 0, hasTr: false, hasSc: false, hasRot: false },
+        // SF-06 dirty-check caches: the last VALUE written per property. NaN
+        // (numeric/transform) and undefined (string) are the "unknown -> must
+        // write" sentinels -- null is not zero, so the first frame after attach
+        // always writes. _applyTrackFrame compares against these before each
+        // write and, when equal, skips the write and builds NO string.
+        _lastNum: new Float64Array(numericProps.length).fill(NaN),
+        _lastStr: new Array(stringProps.length),
+        _lastTx: NaN, _lastTy: NaN, _lastSx: NaN, _lastSy: NaN, _lastRot: NaN,
+        // detach-restore snapshots (see the snapshot block above).
+        _snapNumeric: snapNumeric,
+        _snapString: snapString,
+        _snapTranslate: _snapStyle.translate,
+        _snapRotate: _snapStyle.rotate,
+        _snapScale: _snapStyle.scale,
+        _snapTransform: _snapStyle.transform
     };
+}
+
+/**
+ * Restore an element's touched inline style props to their pre-attach values
+ * and invalidate the dirty-check caches. Cold path -- called once per track on
+ * detach. Converges the polyfill's end state byte-equal with native's
+ * <style>-removal (which never mutated inline style). Fails closed: a prop the
+ * element did not already carry ('' snapshot) is removed, not left as a stale
+ * write. Author inline-style mutations mid-attach are an owned-property limit
+ * (see decisions/0002-detach.md); restore returns the element to attach-time.
+ */
+function _restoreTrackInlineStyle(state) {
+    const style = state.el && state.el.style;
+    if (!style) return;
+    const hasSet = typeof style.setProperty === 'function';
+    const hasRemove = typeof style.removeProperty === 'function';
+    const numericProps = state.numericProps;
+    const numericCss = state.numericCss;
+    const snapNumeric = state._snapNumeric;
+    for (let i = 0; i < numericProps.length; i++) {
+        if (_TRANSFORM_COMPONENTS[numericProps[i]] === true) continue;
+        const prior = snapNumeric[i];
+        if (prior) { if (hasSet) style.setProperty(numericCss[i], prior); }
+        else if (hasRemove) style.removeProperty(numericCss[i]);
+    }
+    const stringCss = state.stringCss;
+    const snapString = state._snapString;
+    for (let i = 0; i < snapString.length; i++) {
+        const prior = snapString[i];
+        if (prior) { if (hasSet) style.setProperty(stringCss[i], prior); }
+        else if (hasRemove) style.removeProperty(stringCss[i]);
+    }
+    style.translate = state._snapTranslate;
+    style.rotate    = state._snapRotate;
+    style.scale     = state._snapScale;
+    style.transform = state._snapTransform;
+    // Invalidate the caches -- a fresh attach must start from the sentinel.
+    state._lastNum.fill(NaN);
+    for (let i = 0; i < state._lastStr.length; i++) state._lastStr[i] = undefined;
+    state._lastTx = NaN; state._lastTy = NaN; state._lastSx = NaN; state._lastSy = NaN; state._lastRot = NaN;
 }
 
 // IO is a visibility GATE ONLY (SF-01) -- it no longer drives progress, so
@@ -1661,20 +1770,27 @@ function _applyTrackFrame(state, rawProgress) {
     const numericCss   = state.numericCss;
     const numericUnit  = state.numericUnit;
     const values = state._values;
+    const lastNum = state._lastNum;
     const nNumeric = numericProps.length;
     for (let i = 0; i < nNumeric; i++) {
         if (_TRANSFORM_COMPONENTS[numericProps[i]] === true) continue;   // flushed below
+        const value = values[i];
+        if (value === lastNum[i]) continue;   // unchanged -- skip the write, build NO string
+        lastNum[i] = value;
         const unit = numericUnit[i];
-        style.setProperty(numericCss[i], unit ? (values[i] + unit) : String(values[i]));
+        style.setProperty(numericCss[i], unit ? (value + unit) : String(value));
     }
     // String properties -- snap to the CURRENT keyframe (no interpolation).
     const stringArrays = state.stringArrays;
     const stringCss    = state.stringCss;
+    const lastStr = state._lastStr;
     const kLo = state._kLo;
     const nString = stringArrays.length;
     for (let i = 0; i < nString; i++) {
         const v = stringArrays[i][kLo];
-        if (v != null) style.setProperty(stringCss[i], v);
+        if (v == null || v === lastStr[i]) continue;   // unchanged -- skip the write
+        lastStr[i] = v;
+        style.setProperty(stringCss[i], v);
     }
     // Flush transform if any transform component was set. SF-04: write the
     // INDIVIDUAL Transforms Level 2 properties -- the same properties the
@@ -1684,16 +1800,32 @@ function _applyTrackFrame(state, rawProgress) {
     // per CHANGED component: at most three per frame.
     const sc = state._scratch;
     if (state.useIndividual) {
-        if (sc.hasTr)  style.translate = sc.tx + 'px ' + sc.ty + 'px';
-        if (sc.hasRot) style.rotate    = sc.rot + 'deg';
-        if (sc.hasSc)  style.scale     = sc.sx + ' ' + sc.sy;
-    } else if (sc.hasTr || sc.hasSc || sc.hasRot) {
+        if (sc.hasTr && (sc.tx !== state._lastTx || sc.ty !== state._lastTy)) {
+            state._lastTx = sc.tx; state._lastTy = sc.ty;
+            style.translate = sc.tx + 'px ' + sc.ty + 'px';
+        }
+        if (sc.hasRot && sc.rot !== state._lastRot) {
+            state._lastRot = sc.rot;
+            style.rotate = sc.rot + 'deg';
+        }
+        if (sc.hasSc && (sc.sx !== state._lastSx || sc.sy !== state._lastSy)) {
+            state._lastSx = sc.sx; state._lastSy = sc.sy;
+            style.scale = sc.sx + ' ' + sc.sy;
+        }
+    } else if ((sc.hasTr  && (sc.tx !== state._lastTx || sc.ty !== state._lastTy)) ||
+               (sc.hasRot &&  sc.rot !== state._lastRot) ||
+               (sc.hasSc  && (sc.sx !== state._lastSx || sc.sy !== state._lastSy))) {
         // Legacy path -- browsers without Transforms Level 2 individual
         // properties. A single `style.transform` string in spec composition
         // order translate -> rotate -> scale. VISUALLY DIVERGENT LEGACY: this
         // clobbers any author `transform`; the individual-property path above
         // does not. Gated behind the attach-time feature check in
-        // _createTrackState (state.useIndividual).
+        // _createTrackState (state.useIndividual). The combined string is
+        // rebuilt whenever ANY present component changed; each present
+        // component's cache is refreshed so the next frame compares correctly.
+        if (sc.hasTr)  { state._lastTx = sc.tx; state._lastTy = sc.ty; }
+        if (sc.hasRot)   state._lastRot = sc.rot;
+        if (sc.hasSc)  { state._lastSx = sc.sx; state._lastSy = sc.sy; }
         style.transform =
             (sc.hasTr  ? ('translate(' + sc.tx + 'px, ' + sc.ty + 'px)') : '') +
             (sc.hasRot ? (' rotate(' + sc.rot + 'deg)') : '') +
@@ -1947,17 +2079,36 @@ export function attachStoryboardRuntime(storyboard, opts) {
     if (typeof document === 'undefined') {
         throw new Error('attachStoryboardRuntime: no document available (browser-only)');
     }
+    // Resolve+allocate EVERY track first, then install. Fail closed (Law: null
+    // is not zero): a selector that resolves to no element is an unverified
+    // state, not a silent no-op -- a typo'd or not-yet-mounted target would
+    // otherwise animate nothing with no signal. Resolving before installing any
+    // observer means a single unresolved selector aborts the whole attach with
+    // ZERO side effects -- no half-installed observer or listener is left with
+    // no detach handle to release it. See decisions/0002-detach.md.
     const states = [];
     for (let i = 0; i < storyboard.tracks.length; i++) {
         const track = storyboard.tracks[i];
         const state = _createTrackState(track);
-        if (!state) continue;   // element not found -- skip
-        if (state.timelineKind === 'scroll') _installScrollObserver(state);
-        else                                  _installViewObserver(state);
+        if (!state) {
+            throw new Error('attachStoryboardRuntime: selector "' + track.selector +
+                '" (track ' + i + ') matched no element. Verify the target exists ' +
+                'before attach, or remove the track.');
+        }
         states.push(state);
     }
+    for (let i = 0; i < states.length; i++) {
+        const state = states[i];
+        if (state.timelineKind === 'scroll') _installScrollObserver(state);
+        else                                  _installViewObserver(state);
+    }
+    _liveAttachments++;   // cold: every observer/ticker/style is installed
+    let detached = false;
     return {
         detach() {
+            if (detached) return;   // idempotent: a second detach is a no-op
+            detached = true;
+            _liveAttachments--;
             for (let i = 0; i < states.length; i++) {
                 const st = states[i];
                 if (st.observer) st.observer.disconnect();
@@ -1974,6 +2125,10 @@ export function attachStoryboardRuntime(storyboard, opts) {
                 // tick closure so nothing outlives the attachment.
                 st._parked = true;
                 st._tickFn = null;
+                // SF-06: restore pre-attach inline style and invalidate the
+                // dirty-check caches, so a detach converges byte-equal with the
+                // native <style>-removal end state (see decisions/0002-detach.md).
+                _restoreTrackInlineStyle(st);
             }
         }
     };
@@ -1998,5 +2153,7 @@ export {
     _createTrackState,
     _installViewObserver,
     _installViewTicker,
-    _supportsIndividualTransforms
+    _supportsIndividualTransforms,
+    _restoreTrackInlineStyle,
+    _liveAttachments
 };

@@ -100,20 +100,23 @@ function _installEnv(opts) {
 }
 
 // --- 1. missing element selector --------------------------------------------
-test('boundary: element selector matches nothing -- track skipped, no style writes, detach clean', () => {
+// SF2: a selector that resolves to no element is now a FAIL-CLOSED error (Law:
+// null is not zero). A typo'd or not-yet-mounted target that used to animate
+// nothing silently now throws a named error naming the offending selector, and
+// no observer or scroll listener is installed for the aborted attach.
+test('boundary: element selector matches nothing -- fail-closed named error, no observer, no listener', () => {
     const env = _installEnv({ selectors: {} });   // '.ghost' intentionally absent
     try {
-        const handle = attachStoryboardRuntime({
+        assert.throws(() => attachStoryboardRuntime({
             tracks: [{
                 selector: '.ghost', timeline: { kind: 'view' },
                 keyframes: [{ opacity: 0 }, { opacity: 1 }], easing: 'linear'
             }]
-        }, { runtime: 'polyfill' });
+        }, { runtime: 'polyfill' }), /matched no element/,
+            'a selector resolving to nothing fails closed with a named error');
 
         assert.equal(env.ioCalls.construct, 0, 'no observer constructed for a track with no element');
         assert.equal(env.win._addCalls, 0, 'no scroll listener installed for a track with no element');
-        assert.doesNotThrow(() => handle.detach(), 'detach on an all-skipped storyboard does not throw');
-        assert.doesNotThrow(() => handle.detach(), 'second detach on an all-skipped storyboard is also safe');
     } finally {
         env.teardown();
     }
@@ -241,12 +244,20 @@ test('boundary: degenerate contain range (elH == viewport) resolves as a step vi
         assert.equal(boundsState.rangeStart, 0.5);
         assert.equal(boundsState.rangeEnd, 0.5);
 
+        // SF-06: the dirty-check writes only on a VALUE change, so a frame that
+        // repeats the current opacity emits no setProperty. The EFFECTIVE
+        // applied value is the last thing written; seed it from the attach frame
+        // and carry it forward across probes so a step that stays flat still
+        // reports the correct held value.
+        const seed = el._setters.filter((s) => s.name === 'opacity').pop();
+        let lastApplied = seed ? +seed.value : undefined;
         function opacityAt(y) {
             el._setters.length = 0;
             env.scrollWindowTo(y);
             env.flush();
             const op = el._setters.filter((s) => s.name === 'opacity').pop();
-            return op ? +op.value : undefined;
+            if (op) lastApplied = +op.value;
+            return lastApplied;
         }
 
         // raw = scrollY / (viewportH+elH) = scrollY/200; boundary at raw==0.5 -> scrollY==100.
@@ -404,6 +415,12 @@ test('boundary (adversarial): scrollY = -0 behaves identically to scrollY = 0 --
         env.fireIo([{ intersectionRatio: 0.5 }]);
         env.flush();
 
+        // Move to a distinct non-zero progress first so the subsequent -0 frame
+        // is a genuine VALUE CHANGE -- the SF-06 dirty-check correctly suppresses
+        // a repeat of an already-written value, so we must land on -0 FROM a
+        // different value to observe the write and inspect what -0 resolves to.
+        env.scrollWindowTo(50);
+        env.flush();
         el._setters.length = 0;
         env.scrollWindowTo(-0);
         env.flush();
@@ -487,26 +504,31 @@ test('boundary: re-entrant/rapid scroll events do not double-schedule rAF -- the
     }
 });
 
-// --- 12. adversarial: sibling-track isolation on partial failure -----------
-test('boundary (adversarial): one missing-selector track does not break a sibling track in the same storyboard', () => {
+// --- 12. adversarial: a missing selector aborts the whole attach cleanly ----
+// SF2: fail-closed replaces partial-skip. Because attachStoryboardRuntime
+// resolves EVERY track before installing any observer, a single unresolved
+// selector aborts the whole attach with ZERO side effects -- no observer
+// constructed, no sibling animated, nothing half-installed to leak. (The good
+// track is listed SECOND to prove the abort happens before install regardless
+// of which track resolves first.)
+test('boundary (adversarial): a missing-selector track fails the whole attach closed, installing nothing', () => {
     const goodEl = _mkEl({ offsetTop: 100, offsetHeight: 100, offsetParent: null, parentElement: null });
     const env = _installEnv({ selectors: { '.good': goodEl }, viewportH: 100, scrollY: 0 });   // '.missing' absent
     try {
-        const handle = attachStoryboardRuntime({
+        assert.throws(() => attachStoryboardRuntime({
             tracks: [
-                { selector: '.missing', timeline: { kind: 'view' },
-                    keyframes: [{ opacity: 0 }, { opacity: 1 }], easing: 'linear' },
                 { selector: '.good', timeline: { kind: 'view' },
+                    keyframes: [{ opacity: 0 }, { opacity: 1 }], easing: 'linear' },
+                { selector: '.missing', timeline: { kind: 'view' },
                     keyframes: [{ opacity: 0 }, { opacity: 1 }], easing: 'linear' }
             ]
-        }, { runtime: 'polyfill' });
+        }, { runtime: 'polyfill' }), /matched no element/,
+            'a storyboard with any unresolved selector fails closed');
 
-        env.fireIo([{ intersectionRatio: 0.5 }]);
-        env.flush();
-        assert.ok(goodEl._setters.some((s) => s.name === 'opacity'),
-            'the sibling track with a real element still animates despite the missing-selector track');
-        assert.equal(env.ioCalls.construct, 1, 'exactly one observer constructed -- only for the live track');
-        assert.doesNotThrow(() => handle.detach(), 'detach cleans up the mixed storyboard without throwing');
+        assert.equal(env.ioCalls.construct, 0, 'no observer constructed on an aborted attach');
+        assert.equal(env.win._addCalls, 0, 'no scroll listener installed on an aborted attach');
+        assert.ok(!goodEl._setters.some((s) => s.name === 'opacity'),
+            'the resolvable sibling was NOT installed before the abort -- no partial state');
     } finally {
         env.teardown();
     }

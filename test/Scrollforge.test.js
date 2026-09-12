@@ -105,7 +105,7 @@ test('linearPoints: represents a Bounce-like analytic (overshoot OK)', () => {
     assert.ok(css.endsWith(', ' + (bounce(1)).toFixed(4).replace(/\.?0+$/, '') + ')'));
 });
 
-test('linearPoints: compact — trailing zeros stripped', () => {
+test('linearPoints: compact -- trailing zeros stripped', () => {
     const constant = () => 0.5;
     const css = linearPoints(constant, 4);
     // Every value is 0.5 (or 0/1 at endpoints via the constant closure).
@@ -591,7 +591,7 @@ test('attachStoryboard: injects a <style data-scrollforge> and returns detach', 
 });
 
 test('attachStoryboard: throws when no document (SSR path)', () => {
-    // No global.document set — sanity check the guard.
+    // No global.document set -- sanity check the guard.
     assert.throws(() => attachStoryboard({
         tracks: [{ selector: '.p', timeline: { kind: 'view' },
                    keyframes: [{ opacity: 0 }, { opacity: 1 }] }]
@@ -632,7 +632,7 @@ test('recipe: scroll progress bar (scroll timeline, full range)', () => {
         easing: 'linear'
     });
     assert.match(out.ruleCss, /animation-timeline: scroll\(root block\);/);
-    // scaleX-only correctly emits `<sx> 1` — height stays 1, width
+    // scaleX-only correctly emits `<sx> 1` -- height stays 1, width
     // animates 0->1. Progress bar semantics preserved.
     assert.match(out.keyframesCss, /scale: 0 1;/);
     assert.match(out.keyframesCss, /scale: 1 1;/);
@@ -733,10 +733,12 @@ test('sequenceOnTimeline: custom bounds (startPct / endPct)', () => {
     assert.equal(out[1].range.end,   '80%');
 });
 
-test('sequenceOnTimeline: single track spans the full range', () => {
+test('sequenceOnTimeline: rejects a single track (SF2 -- needs >= 2 to distribute)', () => {
+    // SF2: distributing one track is a no-op that almost always means the caller
+    // meant to pass more; fail closed with a named error rather than return a
+    // single full-range slot that hides the mistake.
     const inputs = [{ selector: '.only', timeline: { name: '--t' }, keyframes: [{}, {}] }];
-    const out = sequenceOnTimeline(inputs);
-    assert.deepEqual(out[0].range, { start: '0%', end: '100%' });
+    assert.throws(() => sequenceOnTimeline(inputs), /needs >= 2 tracks/);
 });
 
 test('sequenceOnTimeline: rejects empty array', () => {
@@ -748,15 +750,22 @@ test('sequenceOnTimeline: rejects non-array', () => {
 });
 
 test('sequenceOnTimeline: rejects overlap outside [0, 1)', () => {
-    const t = [{ selector: '.a', timeline: { name: '--t' }, keyframes: [{}, {}] }];
+    const t = [
+        { selector: '.a', timeline: { name: '--t' }, keyframes: [{}, {}] },
+        { selector: '.b', timeline: { name: '--t' }, keyframes: [{}, {}] }
+    ];
     assert.throws(() => sequenceOnTimeline(t, { overlap: -0.1 }), RangeError);
     assert.throws(() => sequenceOnTimeline(t, { overlap: 1 }),    RangeError);
     assert.throws(() => sequenceOnTimeline(t, { overlap: 1.5 }),  RangeError);
+    assert.throws(() => sequenceOnTimeline(t, { overlap: NaN }),  RangeError);
     assert.doesNotThrow(() => sequenceOnTimeline(t, { overlap: 0.99 }));
 });
 
 test('sequenceOnTimeline: rejects endPct <= startPct', () => {
-    const t = [{ selector: '.a', timeline: { name: '--t' }, keyframes: [{}, {}] }];
+    const t = [
+        { selector: '.a', timeline: { name: '--t' }, keyframes: [{}, {}] },
+        { selector: '.b', timeline: { name: '--t' }, keyframes: [{}, {}] }
+    ];
     assert.throws(() => sequenceOnTimeline(t, { startPct: 50, endPct: 50 }), RangeError);
     assert.throws(() => sequenceOnTimeline(t, { startPct: 50, endPct: 30 }), RangeError);
 });
@@ -1073,7 +1082,7 @@ test('toGsap: output is syntactically valid JS (Function() parse)', () => {
             easing: 'easeOutCubic'
         }]
     }, { includeImports: false });
-    // Wrap in a function and try to parse — throws on syntax error.
+    // Wrap in a function and try to parse -- throws on syntax error.
     assert.doesNotThrow(() => new Function(
         'gsap',
         code.replace(/export function/, 'return function')
@@ -1167,9 +1176,9 @@ test('toRig: row indexing walks by 4 per element', () => {
               keyframes: [{ rotate: 0 }, { rotate: 90 }] }
         ]
     });
-    assert.match(code, /pool\.addKey\(0 \+ 0, /);   // element 0 · translateX
-    assert.match(code, /pool\.addKey\(4 \+ 2, /);   // element 1 · scale
-    assert.match(code, /pool\.addKey\(8 \+ 3, /);   // element 2 · rotate
+    assert.match(code, /pool\.addKey\(0 \+ 0, /);   // element 0 - translateX
+    assert.match(code, /pool\.addKey\(4 \+ 2, /);   // element 1 - scale
+    assert.match(code, /pool\.addKey\(8 \+ 3, /);   // element 2 - rotate
 });
 
 test('toRig: cover range maps to full [0, 1] t exactly', () => {
@@ -1283,7 +1292,7 @@ test('toGsap and toRig from the same storyboard produce independent outputs', ()
 
 // ---------- Session 5: fallback runtime -------------------------
 
-test('attachStoryboardRuntime: SSR guard — no document throws helpfully', () => {
+test('attachStoryboardRuntime: SSR guard -- no document throws helpfully', () => {
     // Ensure no lingering document from previous tests.
     delete global.document;
     assert.throws(
@@ -1296,7 +1305,7 @@ test('attachStoryboardRuntime: SSR guard — no document throws helpfully', () =
 });
 
 test('attachStoryboardRuntime: runtime="native" delegates to attachStoryboard', () => {
-    // Native path uses <style> injection — same shim we used for attachStoryboard.
+    // Native path uses <style> injection -- same shim we used for attachStoryboard.
     const created = [];
     global.document = {
         head: { appendChild(node) { node._parent = this; created.push(node); } },
@@ -1326,7 +1335,7 @@ test('attachStoryboardRuntime: empty tracks throws', () => {
 
 test('attachStoryboardRuntime: auto with HAS_NATIVE_SUPPORT=false uses polyfill', () => {
     // In node, HAS_NATIVE_SUPPORT is always false. `runtime: 'auto'` should
-    // route to the polyfill path — which needs document + IntersectionObserver
+    // route to the polyfill path -- which needs document + IntersectionObserver
     // (or a scroll fallback).
     let observerCreated = false;
     const styleSetters = [];
@@ -1498,20 +1507,18 @@ test('polyfill: keyframe interpolation at endpoints matches (opacity 0 -> 1)', (
     }
 });
 
-test('polyfill: element not found — track silently skipped', () => {
+test('polyfill: element not found -- fail-closed named error (SF2)', () => {
     global.document = { querySelector: () => null };
     global.window = { innerHeight: 800 };
     global.IntersectionObserver = function () { return { observe(){}, disconnect(){} }; };
     try {
-        const handle = attachStoryboardRuntime({
+        // SF2: fail closed on an unresolved target rather than silently skip.
+        assert.throws(() => attachStoryboardRuntime({
             tracks: [{
                 selector: '.does-not-exist', timeline: { kind: 'view' },
                 keyframes: [{ opacity: 0 }, { opacity: 1 }]
             }]
-        }, { runtime: 'polyfill' });
-        // Should not throw; detach should work
-        assert.equal(typeof handle.detach, 'function');
-        assert.doesNotThrow(() => handle.detach());
+        }, { runtime: 'polyfill' }), /matched no element/);
     } finally {
         delete global.document;
         delete global.window;

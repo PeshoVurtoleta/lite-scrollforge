@@ -125,9 +125,9 @@ measurement — the claim is prose.
 ## 3. Session ladder
 
 ```
-SF0 (1.0.1 — the progress engine: hybrid drive, feedback fix, tall subjects)
-  ├─► SF1 (1.1.0 — the native-parity oracle, promoted to release gate)
-  ├─► SF2 (1.2.0 — honest allocations, dirty writes, symmetric detach)
+SF0 (1.0.1 — the progress engine: hybrid drive, feedback fix, tall subjects)   [SHIPPED]
+  ├─► SF1 (1.1.0 — the native-parity oracle, promoted to release gate)   [SHIPPED]
+  ├─► SF2 (1.2.0 — honest allocations, dirty writes, symmetric detach)   <- NEXT
   └─► SF3 (1.3.0 — the forge demo and the positioning)
         └─► DEFERRED (WAAPI runtime · axis/inline · Safari-ships trigger)
 ```
@@ -145,7 +145,7 @@ rather than merely fixed.
 ---
 package: "@zakkster/lite-scrollforge"
 version_target: 1.0.1
-status: planned
+status: shipped
 findings: [SF-01, SF-02, SF-03, SF-04-partial]
 devPeers: ["@zakkster/lite-gc-profiler ^1.15.0", "@zakkster/lite-leak ^1.9.0"]
 blocks: [SF1, SF2, SF3]
@@ -223,7 +223,7 @@ DONE WHEN
 ---
 package: "@zakkster/lite-scrollforge"
 version_target: 1.1.0
-status: planned
+status: shipped
 findings: [SF-04]
 depends_on: [SF0]
 ---
@@ -286,7 +286,7 @@ DONE WHEN
 ---
 package: "@zakkster/lite-scrollforge"
 version_target: 1.2.0
-status: planned
+status: in-progress
 findings: [SF-05, SF-06]
 depends_on: [SF0]
 ---

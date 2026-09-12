@@ -38,7 +38,8 @@ import {
     _createTrackState,
     _installViewTicker,
     _computeFrame,
-    _applyTrackFrame
+    _applyTrackFrame,
+    _liveAttachments
 } from '../Scrollforge.js';
 
 const CYCLES = 4096;
@@ -58,9 +59,20 @@ const warns = [];
 // --- fake DOM plumbing (stable globals -- kernels patch these once) --------
 const elMap = new Map();
 function makeEl(selector) {
+    // Map-backed inline-style stub: implements the CSSOM surface
+    // _restoreTrackInlineStyle uses (getPropertyValue/setProperty/removeProperty)
+    // so the restore path is exercised for real across the 4096-cycle churn, not
+    // skipped for lack of the methods. Created once per element (not per cycle),
+    // so it adds no per-cycle allocation to the churn GC gate.
+    const props = new Map();
     const el = {
         offsetTop: 400, offsetHeight: 800, offsetParent: null, parentElement: null,
-        style: { transform: '', translate: '', scale: '', rotate: '', setProperty() {} }
+        style: {
+            transform: '', translate: '', scale: '', rotate: '',
+            getPropertyValue(name) { return props.has(name) ? props.get(name) : ''; },
+            setProperty(name, value) { props.set(name, value); },
+            removeProperty(name) { props.delete(name); }
+        }
     };
     elMap.set(selector, el);
     return el;
@@ -144,6 +156,14 @@ await new Promise((r) => setTimeout(r, 50));
 const live = tracker.size();
 const findings = tracker.audit();
 
+// The module-global live-attachment counter must return to EXACTLY 0 after
+// 4096 balanced attach/detach cycles -- proving increment/decrement are paired
+// and detach is idempotent (a double-detach must not underflow it). This is the
+// counter resetKeyframeCounter's fail-closed guard reads. Live ESM binding, so
+// this reflects the current module value.
+const liveAttachAfterChurn = _liveAttachments;
+const liveAttachOk = liveAttachAfterChurn === 0;
+
 // Listener balance: every attach adds one ticker scroll listener; every detach
 // must remove it. Over 4096 cycles adds and removes must be equal and the net
 // live count must be 0 -- scroll-listener release proven by the RETENTION
@@ -201,6 +221,56 @@ const stringsPerProp = ceilNonTransformProps > 0 ? ceilNumeric / ceilNonTransfor
 const ceilingOk = ceilNonTransformProps >= 2 &&
     stringsPerProp <= MAX_NUMERIC_STRINGS &&
     ceilTransform <= MAX_TRANSFORM_STRINGS;
+
+// --- phase 2b: dirty-check lane (SF-06) ------------------------------------
+// A repeated-identical frame must write NOTHING and allocate NOTHING; a control
+// whose progress moves every frame must still write every changed property. The
+// cache changes only WHEN writes fire, never WHAT the steady state paints -- the
+// parity oracle stays byte-identical (assertion 5).
+function makeDirtySink() {
+    return {
+        n: 0, t: 0, _t: '', _s: '', _r: '',
+        setProperty() { this.n++; },
+        set translate(v) { this.t++; this._t = v; }, get translate() { return this._t; },
+        set scale(v) { this.t++; this._s = v; }, get scale() { return this._s; },
+        set rotate(v) { this.t++; this._r = v; }, get rotate() { return this._r; }
+    };
+}
+const DIRTY_TRACK = {
+    selector: '.dirty', timeline: { kind: 'view' },
+    keyframes: [
+        { opacity: 0, '--tint': 0,   translateX: 0,  translateY: 30, scale: 1,   rotate: 0  },
+        { opacity: 1, '--tint': 240, translateX: 10, translateY: 0,  scale: 1.5, rotate: 45 }
+    ],
+    easing: 'linear'
+};
+makeEl('.dirty');
+const dirtyState = _createTrackState(DIRTY_TRACK);
+dirtyState.rangeStart = 0; dirtyState.rangeEnd = 1;
+const dirtySink = makeDirtySink();
+dirtyState.el.style = dirtySink;
+_applyTrackFrame(dirtyState, 0.5);   // prime from the sentinel
+dirtySink.n = 0; dirtySink.t = 0;
+for (let i = 0; i < 1000; i++) _applyTrackFrame(dirtyState, 0.5);   // identical x1000
+const dirtyIdenticalWrites = dirtySink.n + dirtySink.t;
+
+makeEl('.dirtyctl');
+const ctlState = _createTrackState({ ...DIRTY_TRACK, selector: '.dirtyctl' });
+ctlState.rangeStart = 0; ctlState.rangeEnd = 1;
+const ctlSink = makeDirtySink();
+ctlState.el.style = ctlSink;
+for (let i = 0; i < 1000; i++) _applyTrackFrame(ctlState, i / 999);   // varying x1000
+const dirtyControlWrites = ctlSink.n + ctlSink.t;
+
+const dirtyIdenticalOk = dirtyIdenticalWrites === 0;
+const dirtyControlOk = dirtyControlWrites === 5000;
+
+// Repeated-identical _applyTrackFrame allocates 0 B/call (no string built when
+// nothing changed) -- assertion 2's hard zero on the hot body for a static frame.
+const dirtyAllocs = measureAllocs(() => { _applyTrackFrame(dirtyState, 0.5); },
+    { iterations: 512, batches: 32 });
+const dirtyAllocReport = checkAllocs(dirtyAllocs, { maxBytesPerCall: 0 });
+const dirtyAllocOk = dirtyAllocReport.verdict === 'pass';
 
 // --- phase 3: allocation + GC torture (hot _applyTrackFrame) ---------------
 const hotState = _createTrackState(STORYBOARD.tracks[0]);
@@ -270,7 +340,8 @@ const computeAllocOk = computeAllocReport.verdict === 'pass';
 const parkedAllocOk = parkedAllocReport.verdict === 'pass';
 const ok = live === 0 && leaks.length === 0 && findings.length === 0 &&
     listenersBalanced && churnReport.ok && opsReport.ok && ceilingOk &&
-    computeAllocOk && parkedTicksOk && parkedAllocOk;
+    computeAllocOk && parkedTicksOk && parkedAllocOk &&
+    dirtyIdenticalOk && dirtyControlOk && dirtyAllocOk && liveAttachOk;
 
 console.log(
     'GATE leak=size ' + live + '/0 findings=' + findings.length +
@@ -286,7 +357,9 @@ console.log(
     ' transformStrings=' + ceilTransform + '/' + MAX_TRANSFORM_STRINGS +
     ' | compute=' + computeAllocs.bytesPerCall + ' B/call (pure, gated 0)' +
     ' | churn listeners add=' + churnListenerAdds + ' remove=' + churnListenerRemoves + ' net=' + (churnListenerAdds - churnListenerRemoves) +
+    ' | liveAttachments=' + liveAttachAfterChurn + '/0' +
     ' | parked ticks=' + parkedFrames + '/0 parkedBytes=' + parkedAllocs.bytesPerCall + '/0' +
+    ' | dirty identical=' + dirtyIdenticalWrites + '/0 control=' + dirtyControlWrites + '/5000 identicalBytes=' + dirtyAllocs.bytesPerCall + '/0' +
     ' | churn maxMs=' + churnSummary.gc.maxMs.toFixed(2) +
     ' | write-loop gc major=' + s.gc.major + ' (informational)'
 );
@@ -298,7 +371,11 @@ if (!ok) {
     if (!parkedAllocOk) for (const v of parkedAllocReport.violations) console.error('  parked-alloc violation ' + v.metric + ' limit=' + v.limit + ' actual=' + v.actual);
     if (!ceilingOk) console.error('  ceiling exceeded: strings/prop=' + stringsPerProp + ' (' + ceilNumeric + '/' + ceilNonTransformProps + ') transform=' + ceilTransform);
     if (!listenersBalanced) console.error('  scroll listeners unbalanced: add=' + churnListenerAdds + ' remove=' + churnListenerRemoves + ' net=' + (churnListenerAdds - churnListenerRemoves));
+    if (!liveAttachOk) console.error('  live-attachment counter did not return to 0 after churn: ' + liveAttachAfterChurn);
     if (!parkedTicksOk) console.error('  parked ticker applied ' + parkedFrames + ' frames (expected 0)');
+    if (!dirtyIdenticalOk) console.error('  dirty-check: repeated-identical frame wrote ' + dirtyIdenticalWrites + ' (expected 0)');
+    if (!dirtyControlOk) console.error('  dirty-check: varying control wrote ' + dirtyControlWrites + ' (expected 5000)');
+    if (!dirtyAllocOk) for (const v of dirtyAllocReport.violations) console.error('  dirty-alloc violation ' + v.metric + ' limit=' + v.limit + ' actual=' + v.actual);
     for (const f of findings) console.error('  finding ' + f.kind + ':' + f.reason);
     for (const l of leaks) console.error('  leak ' + l);
     process.exitCode = 1;
