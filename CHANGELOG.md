@@ -4,7 +4,7 @@ All notable changes to `@zakkster/lite-scrollforge` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [1.1.0] -- 2026-08-15
+## [1.1.0] -- 2026-09-12
 
 Native-parity verification. No runtime code changed -- `Scrollforge.js` is
 byte-for-byte identical to 1.0.1, and the public API is unchanged. This release
@@ -38,6 +38,23 @@ surfaced.
 - **Verify lanes.** `npm run verify` now chains `test:emitter`, `test:scorer`,
   and `test:browser` after the node and torture gates; publishing is
   mechanically blocked while any corpus item exceeds its tolerance.
+
+### Changed
+
+- Dev tooling upgraded (dev-only, not shipped): `@zakkster/lite-leak`
+  `^1.8.1 -> ^1.10.0` and `@zakkster/lite-gc-profiler` `^1.15.0 -> ^1.16.0`.
+  The torture harness's fake `IntersectionObserver` is now a class so
+  lite-leak 1.10.0's observer-orphan kernel finds `disconnect` on the
+  prototype (it constructs via `Reflect.construct` and calls
+  `OriginalCtor.prototype.disconnect`). Gate numbers are unchanged: leak
+  size 0, 4096/4096 listeners balanced, pure compute 0 B/call, steady-state
+  ~158 B/op.
+- Parity oracle sampling made deterministic: it now settles each scroll
+  position to stability (advancing frames until the scene stops changing)
+  before reading, instead of a fixed two-rAF wait that could occasionally
+  sample one leg a frame behind the other under load. Removes transient
+  sampling skew only -- the committed tolerances and the recorded SF-03 /
+  control divergences are unchanged.
 
 ### Known issues
 

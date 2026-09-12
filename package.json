@@ -37,8 +37,8 @@
   },
   "devDependencies": {
     "@zakkster/lite-ease": "^1.1.0",
-    "@zakkster/lite-gc-profiler": "^1.15.0",
-    "@zakkster/lite-leak": "^1.8.1",
+    "@zakkster/lite-gc-profiler": "^1.16.0",
+    "@zakkster/lite-leak": "^1.10.0",
     "playwright": "^1.62.1"
   },
   "keywords": [

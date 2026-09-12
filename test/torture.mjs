@@ -77,10 +77,21 @@ global.window = {
 global.requestAnimationFrame = (cb) => { cb(); return 1; };
 global.cancelAnimationFrame = () => {};
 let ioCb = null;
-global.IntersectionObserver = function (cb) {
-    ioCb = cb;
-    return { observe() {}, disconnect() {} };
-};
+// A real class, NOT a function returning an object literal. lite-leak 1.10.0's
+// observer-orphan kernel (L-14) builds the instance via
+// `Reflect.construct(OriginalCtor, [cb], newTarget)` and, on the wrapped
+// disconnect, calls `OriginalCtor.prototype.disconnect.call(this)`. An
+// object-literal return has no such prototype method, so the kernel read
+// `undefined` and threw. A class puts observe/disconnect on the prototype where
+// the kernel expects them. Matches the real IntersectionObserver surface
+// Scrollforge uses (new + observe + disconnect; unobserve unused but present).
+class FakeIntersectionObserver {
+    constructor(cb) { ioCb = cb; }
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+}
+global.IntersectionObserver = FakeIntersectionObserver;
 global.CSS = { supports: () => true };
 
 function fireEnter() { if (ioCb) ioCb([{ intersectionRatio: 0.5 }]); }

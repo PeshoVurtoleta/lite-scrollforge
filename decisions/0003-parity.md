@@ -36,6 +36,18 @@ runtime has written its frame, so it captures the *actual* rendered composition
 transform), not the storyboard's intent. `maxDev` is what gates; `rmsDev` is
 reported alongside as the distribution shape.
 
+"After the runtime has written its frame" is enforced by SETTLE-TO-STABILITY,
+not a fixed wait. The polyfill applies each frame from a scroll -> rAF chain
+while native updates on the engine's own style pass; under load the polyfill's
+flush can slip one frame past native, so a fixed two-rAF wait occasionally reads
+one leg mid-step -- a ~1-frame skew (~0.03 opacity / ~1px) that trips a tolerance
+on an otherwise-perfect item. Instead, at each scroll position the harness
+advances frames until the whole scene stops changing between consecutive reads,
+then samples. This reads the settled value native itself computes; a genuinely
+settled divergence (e.g. SF-03 below) lives in the static values and survives
+any settle, so the settle removes transient sampling skew only -- it cannot mask
+a real divergence or loosen a committed tolerance.
+
 ## Committed tolerances (measured, then pinned)
 
 | property class | tolerance | unit | basis |

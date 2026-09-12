@@ -463,17 +463,59 @@ window.__sf = (function () {
       });
     }
 
+    // SETTLE-TO-STABILITY. The polyfill applies each frame from a scroll -> rAF
+    // chain; native updates on the engine's own style pass. A fixed two-rAF wait
+    // is USUALLY enough for both to land at a scroll position, but under load
+    // the polyfill's flush can slip one extra frame, so a naive wait
+    // occasionally reads one leg mid-step -- a ~1-frame skew (~0.03 opacity /
+    // ~1px) that trips a tolerance on an otherwise-perfect item. So do not read
+    // on a fixed wait: advance frames until the whole scene stops changing
+    // between consecutive reads, THEN sample. This reads the settled truth,
+    // which is exactly what native computes; a genuinely settled divergence
+    // (e.g. SF-03 tall subjects) is in the static values and survives any
+    // settle, so this removes transient skew only -- it cannot mask a real gap
+    // or loosen any committed tolerance.
+    var SETTLE_EPS = 1e-4;   // frame-to-frame delta below this == not moving
+    var SETTLE_MAX = 12;     // frame-pairs cap; a static position settles in 1-2
+    function readAll() {
+      var v = {};
+      for (var j = 0; j < item.legs.length; j++) {
+        var lg = item.legs[j];
+        v[lg] = readLeg(built[lg].subj, item.dom.custom || []);
+      }
+      return v;
+    }
+    function legStable(a, b) {
+      if (Math.abs(a.opacity - b.opacity) > SETTLE_EPS) return false;
+      for (var m = 0; m < 6; m++) {
+        if (Math.abs(a.matrix[m] - b.matrix[m]) > SETTLE_EPS) return false;
+      }
+      for (var nm in a.custom) {
+        if (Math.abs((a.custom[nm] || 0) - (b.custom[nm] || 0)) > SETTLE_EPS) return false;
+      }
+      return true;
+    }
+    function sceneStable(prev, cur) {
+      for (var j = 0; j < item.legs.length; j++) {
+        var lg = item.legs[j];
+        if (!prev[lg] || !legStable(prev[lg], cur[lg])) return false;
+      }
+      return true;
+    }
+
     var samples = [];
     for (var s = 0; s <= steps; s++) {
       var y = from + (to - from) * (s / steps);
       doScroll(y);
-      await twoFrames();
-      var legVals = {};
-      for (var j = 0; j < item.legs.length; j++) {
-        var lg = item.legs[j];
-        legVals[lg] = readLeg(built[lg].subj, item.dom.custom || []);
+      var prev = null;
+      var cur = null;
+      for (var t = 0; t < SETTLE_MAX; t++) {
+        await twoFrames();
+        cur = readAll();
+        if (prev && sceneStable(prev, cur)) break;
+        prev = cur;
       }
-      samples.push({ y: y, legs: legVals });
+      samples.push({ y: y, legs: cur });
     }
 
     for (var k in handles) { if (handles[k] && handles[k].detach) handles[k].detach(); }
