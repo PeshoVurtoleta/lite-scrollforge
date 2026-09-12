@@ -23,7 +23,7 @@ drop in the polyfill runtime for browsers without native support.
 - **Zero-GC hot path.** Compositor-driven on native browsers; pre-allocated
   `Float64Array` LUTs, integer switch dispatch on parsed range endpoints,
   and one style-write per element per frame on the polyfill.
-- **134-test core suite, `node:test` only.** `npm test` and `npm run test:gc`
+- **145-test core suite, `node:test` only.** `npm test` and `npm run test:gc`
   (`--expose-gc`) pass; on top, a real-Chromium native-parity oracle plus
   headless scorer and emitter lanes gate every publish (`npm run verify`).
 
@@ -415,14 +415,21 @@ Full TypeScript declarations live in `Scrollforge.d.ts`. Summary:
 native-parity oracle mounts every storyboard in real Chromium and diffs the
 polyfill against the native engine per property; its scorer fails closed and is
 unit-tested headless. Method, tolerances, and the divergence table live in
-[`decisions/0003-parity.md`](decisions/0003-parity.md).
+[`decisions/0003-parity.md`](decisions/0003-parity.md). The runnable wiring
+examples in [`recipes/`](recipes/) are themselves tested at honest levels (full
+runtime vs spelling-gate), and [`demo/native-vs-polyfill.html`](demo/native-vs-polyfill.html)
+is the oracle as an interactive page: the same storyboard driven by native CSS
+and by the polyfill side by side, with a live parity readout.
 
 ```bash
-npm test               # 134 tests, node:test only
-npm run test:gc        # same suite with --expose-gc (zero-GC gate)
+npm test               # 145 tests, node:test only (2 gc-gated ceilings tests
+                       #   run under --expose-gc; skipped cleanly otherwise)
+npm run test:gc        # whole suite with --expose-gc (zero-GC gate)
 npm run test:torture   # lite-gc-profiler + lite-leak allocation/retention gate
+npm run test:ceilings  # hot-path allocation ceilings + a failing control
 npm run test:emitter   # toGsap/toRig snapshots + parse gate (2 tests)
 npm run test:scorer    # oracle scorer fail-closed contract, headless (15 tests)
+npm run test:recipes   # recipes/ wiring examples at honest levels (4 tests)
 npm run test:browser   # native-parity oracle in real Chromium (needs Playwright)
 npm run verify         # every lane in sequence -- the publish gate
 npm run test:coverage  # node's built-in coverage

@@ -4,6 +4,36 @@ All notable changes to `@zakkster/lite-scrollforge` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+Repo-only tooling and examples borrowed from the `@zakkster/lite-scroll-rig-pro`
+playbook. No runtime code changed and nothing new ships: `recipes/`, `demo/`,
+and the added tests are not in `package.json` `files[]`.
+
+### Added
+
+- **Recipe tier (`recipes/` + `test/recipes.test.js`).** Runnable
+  ecosystem-wiring examples -- `gsap-export`, `rig-export`, `ease-curve`
+  (FULL node runtime) and `react-hook.jsx` (SPELLING GATE ONLY) -- each tested
+  at an honestly named level, with a `SCROLLFORGE_RECIPE_BREAK=1` control that
+  forces a tier to fail (a tier that cannot fail is decorative).
+- **Ceilings lane (`test/ceilings.test.js`, `npm run test:ceilings`).** The
+  `_computeFrame` 0-byte and `_applyTrackFrame` write-budget ceilings as a
+  first-class node:test that skips cleanly without `--expose-gc`, with an
+  allocating failing control proving the gate can fail.
+- **Harness symbol guard (`test/harness-guard.test.js`).** Pins the internal
+  and public symbols, the lite-ease peers, and the stripped-source page globals
+  the browser oracle relies on -- without Chromium, so a rename is caught by the
+  publish-gating node suite rather than the skippable browser lane.
+- **Shared fake-DOM fixtures (`test/fixtures.mjs`).** Factored plumbing for the
+  headless node lanes.
+- **Native-vs-polyfill demo (`demo/native-vs-polyfill.html`).** The oracle as an
+  interactive page: one storyboard driven by native CSS scroll-timeline and by
+  the polyfill side by side, with live emitted CSS/GSAP/rig and a live parity
+  readout.
+- Scripts: `test:ceilings` and `test:recipes`; `verify` now includes
+  `test:ceilings`.
+
 ## [1.1.0] -- 2026-09-12
 
 Native-parity verification. No runtime code changed -- `Scrollforge.js` is

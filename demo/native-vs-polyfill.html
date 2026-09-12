@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Scrollforge -- native vs polyfill parity flightdeck</title>
+<style>
+    :root {
+        --bg: #0e1116; --panel: #161b22; --line: #2a313c; --ink: #e6edf3;
+        --muted: #8b949e; --accent: #58a6ff; --good: #3fb950; --warn: #d29922; --bad: #f85149;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); }
+
+    /* Fixed control deck; the page itself scrolls to drive the animations. */
+    .deck {
+        position: fixed; top: 0; left: 0; right: 0; z-index: 50;
+        background: rgba(14,17,22,0.92); backdrop-filter: blur(8px);
+        border-bottom: 1px solid var(--line); padding: 12px 18px;
+    }
+    .deck h1 { font-size: 15px; margin: 0 0 8px; font-weight: 600; letter-spacing: 0.2px; }
+    .deck h1 span { color: var(--muted); font-weight: 400; }
+    .row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+    .row label { font-size: 12px; color: var(--muted); }
+    select, button {
+        font-family: var(--sans); font-size: 13px; background: var(--panel);
+        color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px;
+    }
+    button { cursor: pointer; }
+    .badge { font-size: 11px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line); }
+    .badge.ok { color: var(--good); border-color: var(--good); }
+    .badge.no { color: var(--warn); border-color: var(--warn); }
+
+    .readout { font-family: var(--mono); font-size: 12px; margin-left: auto; display: flex; gap: 16px; }
+    .readout b { color: var(--muted); font-weight: 400; }
+    .readout .v { color: var(--ink); }
+    .readout .v.good { color: var(--good); } .readout .v.warn { color: var(--warn); } .readout .v.bad { color: var(--bad); }
+
+    /* Two scroll lanes side by side; both subjects sweep as the page scrolls. */
+    .stage { display: grid; grid-template-columns: 1fr 1fr; gap: 0; padding-top: 96px; }
+    .lane { position: relative; border-right: 1px solid var(--line); }
+    .lane:last-child { border-right: none; }
+    .lane-head {
+        position: sticky; top: 96px; z-index: 10; padding: 8px 16px; font-size: 12px;
+        color: var(--muted); background: linear-gradient(var(--bg), rgba(14,17,22,0));
+    }
+    .lane-head b { color: var(--ink); font-weight: 600; }
+    .spacer-top { height: 70vh; } .spacer-bottom { height: 90vh; }
+    .subject {
+        width: 150px; height: 150px; margin: 0 auto; border-radius: 14px;
+        background: linear-gradient(135deg, var(--accent), #a371f7);
+        display: flex; align-items: center; justify-content: center;
+        font-family: var(--mono); font-size: 12px; color: #08111f; font-weight: 700;
+        box-shadow: 0 10px 40px rgba(88,166,255,0.25);
+    }
+
+    /* Emitted-code drawer, bottom-fixed. */
+    .code {
+        position: fixed; bottom: 0; left: 0; right: 0; z-index: 40; max-height: 34vh;
+        background: var(--panel); border-top: 1px solid var(--line); display: flex; flex-direction: column;
+    }
+    .code .tabs { display: flex; gap: 2px; padding: 6px 10px 0; }
+    .code .tabs button { border-bottom: none; border-radius: 6px 6px 0 0; padding: 5px 12px; font-size: 12px; }
+    .code .tabs button.active { background: #0b0e13; color: var(--accent); border-color: var(--line); }
+    .code pre {
+        margin: 0; padding: 12px 16px; overflow: auto; font-family: var(--mono); font-size: 11.5px;
+        line-height: 1.5; color: #c9d1d9; background: #0b0e13; flex: 1;
+    }
+    .code .bar { display: flex; align-items: center; gap: 10px; padding: 6px 12px; border-top: 1px solid var(--line); }
+    .code .bar span { font-size: 11px; color: var(--muted); }
+    .hint { position: fixed; bottom: 36vh; left: 50%; transform: translateX(-50%); z-index: 30;
+        font-size: 12px; color: var(--muted); background: rgba(14,17,22,0.8); padding: 5px 12px; border-radius: 999px; }
+</style>
+</head>
+<body>
+<div class="deck">
+    <h1>Scrollforge <span>&mdash; native vs polyfill parity flightdeck</span></h1>
+    <div class="row">
+        <label for="preset">storyboard</label>
+        <select id="preset"></select>
+        <span id="native-badge" class="badge">detecting native support...</span>
+        <button id="reset">re-mount</button>
+        <div class="readout">
+            <span><b>opacity &Delta;</b> <span id="d-op" class="v">--</span></span>
+            <span><b>translate &Delta;px</b> <span id="d-px" class="v">--</span></span>
+            <span><b>peak</b> <span id="d-peak" class="v">--</span></span>
+        </div>
+    </div>
+</div>
+
+<div class="stage">
+    <div class="lane" id="lane-native">
+        <div class="lane-head"><b>native</b> &middot; CSS <code>animation-timeline: view()</code></div>
+        <div class="spacer-top"></div>
+        <div class="subject" id="subj-native">native</div>
+        <div class="spacer-bottom"></div>
+    </div>
+    <div class="lane" id="lane-poly">
+        <div class="lane-head"><b>polyfill</b> &middot; zero-GC JS drive</div>
+        <div class="spacer-top"></div>
+        <div class="subject" id="subj-poly">polyfill</div>
+        <div class="spacer-bottom"></div>
+    </div>
+</div>
+
+<div class="hint">scroll &darr; to sweep both subjects through the viewport</div>
+
+<div class="code">
+    <div class="tabs">
+        <button data-t="css" class="active">CSS (native)</button>
+        <button data-t="gsap">toGsap</button>
+        <button data-t="rig">toRig</button>
+    </div>
+    <pre id="code-out">...</pre>
+    <div class="bar"><span>emitted from the current storyboard &middot; the same source that drives both lanes</span></div>
+</div>
+
+<script type="importmap">
+{ "imports": { "@zakkster/lite-scrollforge": "../Scrollforge.js" } }
+</script>
+<script type="module">
+import {
+    attachStoryboardRuntime, storyboardToCss, toGsap, toRig, HAS_NATIVE_SUPPORT
+} from '@zakkster/lite-scrollforge';
+
+// --- storyboard presets: one track template, mounted per lane against that
+// lane's own subject selector (native and polyfill each get their own copy,
+// exactly as the parity oracle does). ------------------------------------
+const PRESETS = {
+    'fade-rise (entry)': {
+        timeline: { kind: 'view' }, range: { start: 'entry 0%', end: 'entry 100%' },
+        keyframes: [{ opacity: 0, translateY: 60 }, { opacity: 1, translateY: 0 }], easing: 'easeOutCubic'
+    },
+    'cover sweep': {
+        timeline: { kind: 'view' }, range: { start: 'cover 0%', end: 'cover 100%' },
+        keyframes: [{ opacity: 0.15, translateY: -40 }, { opacity: 1, translateY: 40 }], easing: 'easeInOutSine'
+    },
+    'rotate + scale': {
+        timeline: { kind: 'view' }, range: { start: 'entry 0%', end: 'exit 100%' },
+        keyframes: [{ opacity: 0.4, rotate: 0, scale: 0.7 }, { opacity: 1, rotate: 45, scale: 1.1 }], easing: 'linear'
+    }
+};
+
+function trackFor(selector, tpl) {
+    return { selector: selector, timeline: tpl.timeline, range: tpl.range,
+        keyframes: tpl.keyframes, easing: tpl.easing, fill: 'both' };
+}
+function boardFor(selector, tpl) { return { tracks: [trackFor(selector, tpl)] }; }
+
+let handles = [];
+function detachAll() { for (const h of handles) { try { h && h.detach && h.detach(); } catch (e) {} } handles = []; }
+
+function mount(name) {
+    detachAll();
+    const tpl = PRESETS[name];
+    // Native lane: real CSS scroll-driven animation (delegates to attachStoryboard).
+    handles.push(attachStoryboardRuntime(boardFor('#subj-native', tpl), { runtime: 'native' }));
+    // Polyfill lane: forced JS drive train.
+    handles.push(attachStoryboardRuntime(boardFor('#subj-poly', tpl), { runtime: 'polyfill' }));
+    renderCode(tpl);
+}
+
+// --- emitted-code panel --------------------------------------------------
+let tab = 'css';
+function renderCode(tpl) {
+    const board = boardFor('.subject', tpl);
+    let out = '';
+    try {
+        if (tab === 'css') out = storyboardToCss(board, { prettyPrint: true });
+        else if (tab === 'gsap') out = toGsap(board, { moduleFormat: 'esm' });
+        else out = toRig(board, { moduleFormat: 'esm' });
+    } catch (e) { out = '// ' + e.message; }
+    document.getElementById('code-out').textContent = out;
+}
+
+// --- live parity readout: read both subjects the way the oracle does -----
+function composed(el) {
+    const cs = getComputedStyle(el);
+    let m = new DOMMatrix();
+    const tr = cs.translate, ro = cs.rotate, sc = cs.scale, tf = cs.transform;
+    if (tr && tr !== 'none') { const a = tr.split(/\s+/).map(parseFloat); m = m.translate(a[0] || 0, a.length > 1 ? (a[1] || 0) : 0); }
+    if (ro && ro !== 'none') m = m.rotate(parseFloat(ro) || 0);
+    if (sc && sc !== 'none') { const s = sc.split(/\s+/).map(parseFloat); m = m.scale(s[0], s.length > 1 ? s[1] : s[0]); }
+    if (tf && tf !== 'none') m = m.multiply(new DOMMatrix(tf));
+    return { opacity: parseFloat(cs.opacity), m: m };
+}
+let peak = 0;
+const dOp = document.getElementById('d-op'), dPx = document.getElementById('d-px'), dPeak = document.getElementById('d-peak');
+function cls(el, v, warnAt, badAt) { el.className = 'v' + (v > badAt ? ' bad' : v > warnAt ? ' warn' : ' good'); }
+function tick() {
+    const a = composed(document.getElementById('subj-native'));
+    const b = composed(document.getElementById('subj-poly'));
+    const dop = Math.abs(a.opacity - b.opacity);
+    const dpx = Math.max(Math.abs(a.m.e - b.m.e), Math.abs(a.m.f - b.m.f));
+    peak = Math.max(peak, dop, dpx / 100);
+    dOp.textContent = dop.toFixed(4); cls(dOp, dop, 0.02, 0.1);
+    dPx.textContent = dpx.toFixed(3); cls(dPx, dpx, 1.0, 5);
+    dPeak.textContent = peak.toFixed(4);
+    requestAnimationFrame(tick);
+}
+
+// --- wire up -------------------------------------------------------------
+const sel = document.getElementById('preset');
+for (const name in PRESETS) { const o = document.createElement('option'); o.value = name; o.textContent = name; sel.appendChild(o); }
+sel.addEventListener('change', () => { peak = 0; mount(sel.value); });
+document.getElementById('reset').addEventListener('click', () => { peak = 0; mount(sel.value); });
+for (const b of document.querySelectorAll('.code .tabs button')) {
+    b.addEventListener('click', () => {
+        for (const x of document.querySelectorAll('.code .tabs button')) x.classList.remove('active');
+        b.classList.add('active'); tab = b.dataset.t; renderCode(PRESETS[sel.value]);
+    });
+}
+
+const badge = document.getElementById('native-badge');
+if (HAS_NATIVE_SUPPORT) { badge.textContent = 'native scroll-timeline: supported'; badge.className = 'badge ok'; }
+else { badge.textContent = 'no native support -- both lanes run the polyfill'; badge.className = 'badge no'; }
+
+mount(sel.value);
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>

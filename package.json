@@ -29,11 +29,13 @@
     "test": "node --test --test-reporter=spec 'test/*.test.js'",
     "test:gc": "node --expose-gc --test --test-reporter=spec 'test/*.test.js'",
     "test:torture": "node --expose-gc test/torture.mjs",
+    "test:ceilings": "node --expose-gc --test test/ceilings.test.js",
+    "test:recipes": "node --test test/recipes.test.js",
     "test:coverage": "node --experimental-test-coverage --test 'test/*.test.js'",
     "test:emitter": "node --test test/browser/emitter.test.mjs",
     "test:scorer": "node --test test/browser/scorer.test.mjs",
     "test:browser": "node --test test/browser/oracle.test.mjs",
-    "verify": "npm run test && npm run test:torture && npm run test:emitter && npm run test:scorer && npm run test:browser"
+    "verify": "npm run test && npm run test:torture && npm run test:ceilings && npm run test:emitter && npm run test:scorer && npm run test:browser"
   },
   "devDependencies": {
     "@zakkster/lite-ease": "^1.1.0",

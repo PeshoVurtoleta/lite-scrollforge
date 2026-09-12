@@ -97,11 +97,13 @@ Universal attach (auto-detects native support):
 
 ## Testing (development)
 
-    npm test            # 134 tests, node:test only
-    npm run test:gc     # same suite with --expose-gc (zero-GC gate)
+    npm test            # 145 tests, node:test only (2 gc-gated, run under test:gc)
+    npm run test:gc     # whole suite with --expose-gc (zero-GC gate)
     npm run test:torture # lite-gc-profiler + lite-leak allocation/retention gate
+    npm run test:ceilings # hot-path allocation ceilings + a failing control
     npm run test:emitter # toGsap/toRig snapshots + parse gate
     npm run test:scorer  # oracle scorer fail-closed contract (headless)
+    npm run test:recipes # recipes/ wiring examples at honest test levels
     npm run test:browser # native-parity oracle: polyfill vs native in real Chromium
     npm run verify       # every lane in sequence -- the publish gate
 
