@@ -1127,9 +1127,16 @@ test('toRig: minimal supported track emits pool.addKey per property', () => {
     // scale on row + 2
     assert.match(code, /pool\.addKey\(0 \+ 2, 0, 0\.9\);/);
     assert.match(code, /pool\.addKey\(0 \+ 2, 1, 1\);/);
-    // Engine + Scroller wired
+    // Engine + Scroller wired for the real rig 1.3.2 API: construct the
+    // DOMScroller (a renderer), register it, seed the ceiling + measure, start
+    // the loop; tear down via engine.destroy() (NOT the nonexistent .dispose()).
     assert.match(code, /new ScrollEngine\(container \|\| document\.body\)/);
-    assert.match(code, /new DOMScroller\(elements, pool, \{ engine: engine \}\)/);
+    assert.match(code, /new DOMScroller\(elements, pool\)/);
+    assert.match(code, /engine\.addRenderer\(scroller\)/);
+    assert.match(code, /engine\.resize\(\)/);
+    assert.match(code, /engine\.start\(\)/);
+    assert.match(code, /engine\.destroy\(\)/);
+    assert.ok(!/\.dispose\(/.test(code), 'emitted rig code must not call the nonexistent .dispose()');
 });
 
 test('toRig: unsupported properties dropped with a per-track comment', () => {

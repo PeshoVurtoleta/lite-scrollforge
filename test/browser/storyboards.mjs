@@ -167,7 +167,37 @@ function easingItem(name, fn) {
     };
 }
 
+// SF3: the exact storyboard demo/scrollforge.html scene 02 (PARITY) shows. It
+// lives here, in the corpus, so the oracle's measured maxDev on `demo-scene02`
+// and the demo's live per-property readout are the SAME storyboard -- the demo
+// cannot drift from the headless truth. Kept a SHORT subject with a plain
+// opacity + translateY track (no tall-subject SF-03 divergence, no author
+// transform), so it gates at full 0003 tolerance and reads ~0 on the lane.
+// demo-guard.test.js imports this and asserts the demo embeds a matching track.
+export const DEMO_SCENE02 = Object.freeze({
+    subjectH: 120,
+    range: Object.freeze({ start: 'entry 0%', end: 'entry 100%' }),
+    keyframes: Object.freeze([
+        Object.freeze({ opacity: 0, translateY: 40 }),
+        Object.freeze({ opacity: 1, translateY: 0 })
+    ]),
+    easing: 'easeOutCubic',
+    tol: Object.freeze({ opacity: 0.02, transformPx: 1.0, matrix: 0.01, custom: 0.5 })
+});
+
 export const CORPUS = [
+    // demo scene 02 (PARITY) -- the exact storyboard the demo mounts on both
+    // runtimes; its lane maxDev is the number the demo's live readout must match.
+    (function demoScene02() {
+        const it = viewItem('demo-scene02', null, DEMO_SCENE02.subjectH);
+        it.track = { range: { start: DEMO_SCENE02.range.start, end: DEMO_SCENE02.range.end },
+            keyframes: DEMO_SCENE02.keyframes.map((k) => Object.assign({}, k)),
+            easing: DEMO_SCENE02.easing, fill: 'both' };
+        it.scroll = { target: 'window', from: SPACER_TOP - VIEWPORT_H + PAD,
+            to: SPACER_TOP + DEMO_SCENE02.subjectH - PAD, steps: STEPS };
+        return it;
+    })(),
+
     // quick-start (README's first example)
     (function quickstart() {
         const it = viewItem('quick-start', null, 100);

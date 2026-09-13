@@ -20,10 +20,13 @@ export function attachScrollRig(container) {
     pool.addKey(0 + 0, 0.5, 0); // translateX
 
     const engine = new ScrollEngine(container || document.body);
-    const scroller = new DOMScroller(elements, pool, { engine: engine });
+    const scroller = new DOMScroller(elements, pool);
+    engine.addRenderer(scroller); // DOMScroller is a renderer: render(currentY)
+    engine.resize();  // seed the scroll ceiling + measure element bounds
+    engine.start();
 
     return function detach() {
-        if (scroller && typeof scroller.dispose === "function") scroller.dispose();
-        if (engine   && typeof engine.dispose   === "function") engine.dispose();
+        // engine.destroy() tears down every renderer addRenderer received.
+        if (engine && typeof engine.destroy === "function") engine.destroy();
     };
 }

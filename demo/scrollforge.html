@@ -1,0 +1,595 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scrollforge -- config in, motion out, code out</title>
+<style>
+    :root {
+        --bg: #0b0f14;
+        --panel: #111820;
+        --panel-2: #0e141b;
+        --ink: #e6edf3;
+        --ink-dim: #8b98a5;
+        --line: #1d2732;
+        --accent: #4cc9f0;
+        --accent-2: #f7b955;
+        --ok: #5bd68a;
+        --bad: #ff6b6b;
+        --grid: #16202b;
+        color-scheme: dark;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+        margin: 0;
+        background:
+            linear-gradient(0deg, transparent 95%, var(--grid) 95%) 0 0 / 100% 2rem,
+            linear-gradient(90deg, transparent 95%, var(--grid) 95%) 0 0 / 2rem 100%,
+            var(--bg);
+        color: var(--ink);
+        font: 15px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    header.deck {
+        position: sticky; top: 0; z-index: 20;
+        display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.75rem 1.5rem;
+        padding: 0.9rem 1.25rem;
+        background: color-mix(in oklab, var(--panel) 92%, transparent);
+        border-bottom: 1px solid var(--line);
+        backdrop-filter: blur(6px);
+    }
+    header.deck h1 { font-size: 1rem; margin: 0; letter-spacing: 0.02em; }
+    header.deck h1 b { color: var(--accent); }
+    header.deck .sub { color: var(--ink-dim); font-size: 0.82rem; }
+    .telemetry { margin-left: auto; display: flex; gap: 1rem; font-size: 0.78rem; color: var(--ink-dim); }
+    .telemetry b { color: var(--accent-2); font-weight: 600; }
+
+    nav.tabs { display: flex; flex-wrap: wrap; gap: 0.4rem; padding: 0.75rem 1.25rem 0; }
+    nav.tabs button {
+        font: inherit; font-size: 0.8rem;
+        color: var(--ink-dim); background: var(--panel-2);
+        border: 1px solid var(--line); border-radius: 0.4rem 0.4rem 0 0;
+        padding: 0.5rem 0.9rem; cursor: pointer;
+    }
+    nav.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); background: var(--panel); }
+    @media (hover: hover) { nav.tabs button:hover { color: var(--ink); } }
+
+    main { padding: 1rem 1.25rem 6rem; }
+    .scene { display: none; }
+    .scene[data-active="true"] { display: grid; grid-template-columns: minmax(280px, 24rem) 1fr; gap: 1.25rem; align-items: start; }
+    @media (max-width: 820px) { .scene[data-active="true"] { grid-template-columns: 1fr; } }
+
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 0.6rem; padding: 1rem 1.1rem; }
+    .panel h2 { margin: 0 0 0.2rem; font-size: 0.95rem; letter-spacing: 0.04em; }
+    .panel h2 span { color: var(--accent); }
+    .panel p.lede { margin: 0 0 0.9rem; color: var(--ink-dim); font-size: 0.82rem; }
+
+    label.field { display: block; margin: 0.55rem 0; font-size: 0.78rem; color: var(--ink-dim); }
+    label.field span.val { color: var(--ink); float: right; }
+    input[type="range"] { width: 100%; accent-color: var(--accent); }
+    select {
+        width: 100%; font: inherit; font-size: 0.82rem; margin-top: 0.2rem;
+        background: var(--panel-2); color: var(--ink); border: 1px solid var(--line);
+        border-radius: 0.35rem; padding: 0.4rem 0.5rem;
+    }
+    .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 0.4rem; overflow: hidden; }
+    .seg button {
+        font: inherit; font-size: 0.78rem; color: var(--ink-dim);
+        background: var(--panel-2); border: 0; padding: 0.4rem 0.7rem; cursor: pointer;
+    }
+    .seg button[aria-pressed="true"] { color: #06121a; background: var(--accent); }
+
+    .stage { position: relative; height: 60vh; min-height: 22rem; overflow: auto;
+        background: var(--panel-2); border: 1px solid var(--line); border-radius: 0.6rem; }
+    .stage .spacer { height: 70vh; }
+    .card {
+        width: 8rem; height: 8rem; margin: 0 auto; border-radius: 0.8rem;
+        background: linear-gradient(135deg, #2b90c9, #f7b955);
+        display: grid; place-items: center; color: #06121a; font-weight: 700;
+    }
+    .mirror { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    .mirror .col h3 { margin: 0 0 0.4rem; font-size: 0.75rem; color: var(--ink-dim); text-align: center; }
+
+    pre.code {
+        margin: 0; max-height: 60vh; overflow: auto; font-size: 0.76rem; line-height: 1.5;
+        background: var(--panel-2); border: 1px solid var(--line); border-radius: 0.5rem;
+        padding: 0.8rem 0.9rem; white-space: pre; color: var(--ink);
+    }
+    .readout { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 0.5rem; margin-top: 0.8rem; }
+    .readout .cell { background: var(--panel-2); border: 1px solid var(--line); border-radius: 0.45rem; padding: 0.5rem 0.6rem; }
+    .readout .cell .k { font-size: 0.7rem; color: var(--ink-dim); }
+    .readout .cell .v { font-size: 1.05rem; }
+    .readout .cell .v.ok { color: var(--ok); }
+    .readout .cell .v.bad { color: var(--bad); }
+    .note { margin-top: 0.6rem; font-size: 0.74rem; color: var(--ink-dim); }
+    #zerogc-run { margin-top: 0.6rem; }
+    #zerogc-run span { display: inline-block; padding: 0.4rem 0.7rem; }
+    .marker { color: var(--accent-2); }
+    .drop { color: var(--bad); }
+</style>
+</head>
+<body>
+<header class="deck">
+    <h1><b>Scrollforge</b> -- config in, motion out, code out</h1>
+    <span class="sub">author once, target four: native CSS / GSAP / rig / polyfill</span>
+    <div class="telemetry">
+        <span>scene <b id="tel-scene">01</b></span>
+        <span>engine <b id="tel-engine">--</b></span>
+        <span>progress <b id="tel-progress">0%</b></span>
+    </div>
+</header>
+
+<nav class="tabs" role="tablist">
+    <button role="tab" data-scene="author" aria-selected="true">01 - AUTHOR</button>
+    <button role="tab" data-scene="parity" aria-selected="false">02 - PARITY</button>
+    <button role="tab" data-scene="compile" aria-selected="false">03 - COMPILE</button>
+    <button role="tab" data-scene="zerogc" aria-selected="false">04 - ZERO-GC</button>
+</nav>
+
+<main>
+    <!-- 01 - AUTHOR -->
+    <section class="scene" data-scene="author" data-active="true">
+        <div class="panel">
+            <h2><span>01</span> AUTHOR</h2>
+            <p class="lede">Edit a storyboard; watch it run. Toggle the runtime -- the active engine is shown.</p>
+            <label class="field">runtime
+                <div class="seg" id="author-runtime" role="group" aria-label="runtime">
+                    <button data-rt="auto" aria-pressed="true">auto</button>
+                    <button data-rt="native" aria-pressed="false">native</button>
+                    <button data-rt="polyfill" aria-pressed="false">polyfill</button>
+                </div>
+            </label>
+            <label class="field">preset
+                <select id="author-preset">
+                    <option value="rise">rise + fade (entry)</option>
+                    <option value="parallax">parallax drift (scroll)</option>
+                    <option value="pop">pop-in (cover)</option>
+                </select>
+            </label>
+            <label class="field">travel Y <span class="val" id="author-ty-lbl">40</span>
+                <input type="range" id="author-ty" min="-120" max="120" step="1" value="40">
+            </label>
+            <label class="field">scale from <span class="val" id="author-scale-lbl">1.00</span>
+                <input type="range" id="author-scale" min="0.5" max="1.5" step="0.01" value="1">
+            </label>
+            <label class="field">easing
+                <select id="author-easing">
+                    <option value="easeOutCubic">easeOutCubic</option>
+                    <option value="linear">linear</option>
+                    <option value="easeInOutQuad">easeInOutQuad</option>
+                    <option value="easeOutBack">easeOutBack</option>
+                </select>
+            </label>
+            <p class="note">active engine: <b id="author-engine">--</b></p>
+        </div>
+        <div>
+            <div class="stage" id="author-stage">
+                <div class="spacer"></div>
+                <div class="card" id="author-card">SF</div>
+                <div class="spacer"></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 02 - PARITY -->
+    <section class="scene" data-scene="parity">
+        <div class="panel">
+            <h2><span>02</span> PARITY</h2>
+            <p class="lede">Both runtimes on mirrored elements. Live per-property deviation, gated to the recorded 0003 tolerances. The legacy transform path is the control that visibly diverges.</p>
+            <label class="field">
+                <div class="seg" id="parity-legacy" role="group" aria-label="legacy transform path">
+                    <button data-legacy="off" aria-pressed="true">individual props</button>
+                    <button data-legacy="on" aria-pressed="false">legacy string (control)</button>
+                </div>
+            </label>
+            <div class="readout" id="parity-readout">
+                <div class="cell"><div class="k">opacity maxDev</div><div class="v" id="p-opacity">0.0000</div></div>
+                <div class="cell"><div class="k">translate px maxDev</div><div class="v" id="p-px">0.0000</div></div>
+                <div class="cell"><div class="k">matrix maxDev</div><div class="v" id="p-mat">0.0000</div></div>
+            </div>
+            <p class="note">tolerances: opacity &lt;= <b id="tol-opacity">0.02</b>, translate &lt;= <b id="tol-px">1</b> px, matrix &lt;= <b id="tol-mat">0.01</b></p>
+        </div>
+        <div>
+            <div class="mirror">
+                <div class="col"><h3>native</h3>
+                    <div class="stage" id="parity-stage-native">
+                        <div class="spacer"></div><div class="card" id="p02-native">N</div><div class="spacer"></div>
+                    </div>
+                </div>
+                <div class="col"><h3 id="parity-poly-label">polyfill</h3>
+                    <div class="stage" id="parity-stage-poly">
+                        <div class="spacer"></div><div class="card" id="p02-poly">P</div><div class="spacer"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 03 - COMPILE -->
+    <section class="scene" data-scene="compile">
+        <div class="panel">
+            <h2><span>03</span> COMPILE</h2>
+            <p class="lede">The current storyboard, compiled live. Dropped props and CustomEase markers are shown -- honesty as UI.</p>
+            <div class="seg" id="compile-target" role="group" aria-label="compile target">
+                <button data-target="native" aria-pressed="true">native CSS</button>
+                <button data-target="gsap" aria-pressed="false">GSAP</button>
+                <button data-target="rig" aria-pressed="false">rig</button>
+            </div>
+            <p class="note" id="compile-notes"></p>
+        </div>
+        <div>
+            <pre class="code" id="compile-code">/* compiling... */</pre>
+        </div>
+    </section>
+
+    <!-- 04 - ZERO-GC -->
+    <section class="scene" data-scene="zerogc">
+        <div class="panel">
+            <h2><span>04</span> ZERO-GC</h2>
+            <p class="lede">Scripted auto-scroll with a per-frame write counter. The dirty check drops it to 0 at range ends. The allocating toggle is the control.</p>
+            <label class="field">
+                <div class="seg" id="zerogc-mode" role="group" aria-label="write mode">
+                    <button data-mode="dirty" aria-pressed="true">dirty-check (default)</button>
+                    <button data-mode="alloc" aria-pressed="false">allocating (control)</button>
+                </div>
+            </label>
+            <button class="seg" id="zerogc-run"><span>run 1000-frame sweep</span></button>
+            <div class="readout">
+                <div class="cell"><div class="k">writes this frame</div><div class="v" id="z-frame">0</div></div>
+                <div class="cell"><div class="k">total writes</div><div class="v" id="z-total">0</div></div>
+                <div class="cell"><div class="k">expected (varying)</div><div class="v" id="z-expected">5000</div></div>
+            </div>
+            <p class="note">writes/frame at mid-range: <b id="z-per-frame">5</b> (one string per changed property). At a clamped range end: <b>0</b>.</p>
+        </div>
+        <div>
+            <div class="stage" id="zerogc-stage">
+                <div class="spacer"></div>
+                <div class="card" id="zerogc-card">GC</div>
+                <div class="spacer"></div>
+            </div>
+        </div>
+    </section>
+</main>
+
+<script type="importmap">
+{
+    "imports": {
+        "@zakkster/lite-scrollforge": "../Scrollforge.js",
+        "@zakkster/lite-signal": "../node_modules/@zakkster/lite-signal/Signal.js"
+    }
+}
+</script>
+<script type="module">
+    import { signal, effect } from '@zakkster/lite-signal';
+    import {
+        storyboardToCss,
+        attachStoryboardRuntime,
+        toGsap,
+        toRig,
+        HAS_NATIVE_SUPPORT
+    } from '@zakkster/lite-scrollforge';
+
+    // ---- committed constants (demo-guard.test.js gates these against the
+    // headless truth: WRITES_PER_FRAME == the measured per-frame count, the
+    // tolerances == decisions/0003-parity.md, the scene-02 storyboard ==
+    // storyboards.mjs DEMO_SCENE02). Do not hand-edit these apart.
+    const WRITES_PER_FRAME = 5;               // one string per changed property
+    const ZEROGC_FRAMES = 1000;               // scripted sweep length
+    const ZEROGC_EXPECTED = WRITES_PER_FRAME * ZEROGC_FRAMES;   // 5000, == ceilings.test.js
+    const PARITY_TOL = { opacity: 0.02, transformPx: 1.0, matrix: 0.01, custom: 0.5 };
+
+    // The exact storyboard scene 02 mounts -- identical to storyboards.mjs
+    // DEMO_SCENE02 so the demo's live readout and the oracle's maxDev are the
+    // same storyboard. Short subject, opacity + translateY, easeOutCubic.
+    const SCENE02_STORYBOARD = {
+        tracks: [{
+            selector: '#p02-native',
+            timeline: { kind: 'view' },
+            range: { start: 'entry 0%', end: 'entry 100%' },
+            keyframes: [{ opacity: 0, translateY: 40 }, { opacity: 1, translateY: 0 }],
+            easing: 'easeOutCubic'
+        }]
+    };
+
+    // Scene 04 storyboard: five NON-transform properties (opacity + four custom
+    // props), so every changed property is written through style.setProperty --
+    // the exact call the page-side counter wraps. Five props -> WRITES_PER_FRAME.
+    const ZEROGC_STORYBOARD = {
+        tracks: [{
+            selector: '#zerogc-card',
+            timeline: { kind: 'view' },
+            range: { start: 'cover 0%', end: 'cover 100%' },
+            keyframes: [
+                { opacity: 0, '--sf-a': 0, '--sf-b': 0, '--sf-c': 0, '--sf-d': 0 },
+                { opacity: 1, '--sf-a': 100, '--sf-b': 200, '--sf-c': 300, '--sf-d': 400 }
+            ],
+            easing: 'linear'
+        }]
+    };
+
+    // ---- cached DOM refs (hot-path law: query once at init) ------------------
+    const $ = (id) => document.getElementById(id);
+    const _tabs = Array.from(document.querySelectorAll('nav.tabs button'));
+    const _scenes = Array.from(document.querySelectorAll('.scene'));
+    const $telScene = $('tel-scene');
+    const $telEngine = $('tel-engine');
+    const $telProgress = $('tel-progress');
+
+    // Scene 01
+    const $authorRuntime = $('author-runtime');
+    const _authorRtBtns = Array.from($authorRuntime.querySelectorAll('button'));
+    const $authorPreset = $('author-preset');
+    const $authorTy = $('author-ty');
+    const $authorTyLbl = $('author-ty-lbl');
+    const $authorScale = $('author-scale');
+    const $authorScaleLbl = $('author-scale-lbl');
+    const $authorEasing = $('author-easing');
+    const $authorEngine = $('author-engine');
+
+    // Scene 02
+    const $parityLegacy = $('parity-legacy');
+    const _legacyBtns = Array.from($parityLegacy.querySelectorAll('button'));
+    const $pOpacity = $('p-opacity');
+    const $pPx = $('p-px');
+    const $pMat = $('p-mat');
+    const $p02Native = $('p02-native');
+    const $p02Poly = $('p02-poly');
+    const $parityPolyLabel = $('parity-poly-label');
+    const $tolOpacity = $('tol-opacity');
+    const $tolPx = $('tol-px');
+    const $tolMat = $('tol-mat');
+
+    // Scene 03
+    const $compileTarget = $('compile-target');
+    const _compileBtns = Array.from($compileTarget.querySelectorAll('button'));
+    const $compileCode = $('compile-code');
+    const $compileNotes = $('compile-notes');
+
+    // Scene 04
+    const $zerogcMode = $('zerogc-mode');
+    const _zerogcBtns = Array.from($zerogcMode.querySelectorAll('button'));
+    const $zerogcRun = $('zerogc-run');
+    const $zerogcCard = $('zerogc-card');
+    const $zerogcStage = $('zerogc-stage');
+    const $zFrame = $('z-frame');
+    const $zTotal = $('z-total');
+    const $zExpected = $('z-expected');
+    const $zPerFrame = $('z-per-frame');
+
+    // ---- reactive state (init from peek at boot; never hardcode in HTML) -----
+    const scene = signal('author');
+    const runtime = signal('auto');
+    const authorCfg = signal({ preset: 'rise', ty: 40, scale: 1, easing: 'easeOutCubic' });
+    const legacyMode = signal(false);
+    const compileTarget = signal('native');
+    const zerogcMode = signal('dirty');
+
+    // Seed static labels from the committed constants (law: no hardcoded state).
+    $tolOpacity.textContent = String(PARITY_TOL.opacity);
+    $tolPx.textContent = String(PARITY_TOL.transformPx);
+    $tolMat.textContent = String(PARITY_TOL.matrix);
+    $zExpected.textContent = String(ZEROGC_EXPECTED);
+    $zPerFrame.textContent = String(WRITES_PER_FRAME);
+    $authorTyLbl.textContent = String(authorCfg.peek().ty);
+    $authorScaleLbl.textContent = authorCfg.peek().scale.toFixed(2);
+
+    // ---- author storyboard builder ------------------------------------------
+    function buildAuthorStoryboard(cfg) {
+        if (cfg.preset === 'parallax') {
+            return { tracks: [{ selector: '#author-card', timeline: { kind: 'scroll', scroller: 'nearest' },
+                keyframes: [{ translateY: 0 }, { translateY: cfg.ty }], easing: cfg.easing }] };
+        }
+        const range = cfg.preset === 'pop'
+            ? { start: 'cover 0%', end: 'cover 100%' }
+            : { start: 'entry 0%', end: 'entry 100%' };
+        return { tracks: [{ selector: '#author-card', timeline: { kind: 'view' }, range: range,
+            keyframes: [{ opacity: 0, translateY: cfg.ty, scale: cfg.scale },
+                { opacity: 1, translateY: 0, scale: 1 }],
+            easing: cfg.easing }] };
+    }
+
+    function resolveEngine(rt) {
+        if (rt === 'native') return 'native';
+        if (rt === 'polyfill') return 'polyfill';
+        return HAS_NATIVE_SUPPORT ? 'native' : 'polyfill';
+    }
+
+    // ---- scene 01 wiring -----------------------------------------------------
+    let _authorHandle = null;
+    function remountAuthor() {
+        if (_authorHandle && _authorHandle.detach) _authorHandle.detach();
+        const rt = runtime.peek();
+        const eng = resolveEngine(rt);
+        $authorEngine.textContent = eng;
+        $telEngine.textContent = eng;
+        const opts = rt === 'auto' ? {} : { runtime: rt };
+        try { _authorHandle = attachStoryboardRuntime(buildAuthorStoryboard(authorCfg.peek()), opts); }
+        catch (e) { $authorEngine.textContent = 'error: ' + e.message; }
+    }
+    effect(() => { authorCfg(); runtime(); if (scene() === 'author') remountAuthor(); });
+
+    _authorRtBtns.forEach((b) => b.addEventListener('click', () => {
+        runtime.set(b.dataset.rt);
+        _authorRtBtns.forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    }));
+    $authorPreset.addEventListener('change', () => authorCfg.set(Object.assign({}, authorCfg.peek(), { preset: $authorPreset.value })));
+    $authorEasing.addEventListener('change', () => authorCfg.set(Object.assign({}, authorCfg.peek(), { easing: $authorEasing.value })));
+    $authorTy.addEventListener('input', () => { $authorTyLbl.textContent = $authorTy.value; authorCfg.set(Object.assign({}, authorCfg.peek(), { ty: +$authorTy.value })); });
+    $authorScale.addEventListener('input', () => { $authorScaleLbl.textContent = (+$authorScale.value).toFixed(2); authorCfg.set(Object.assign({}, authorCfg.peek(), { scale: +$authorScale.value })); });
+
+    // ---- scene 02: parity readout (pairScore + push inlined from score.mjs) --
+    // Fail closed: a non-finite deviation is an UNMEASURED state, not a zero.
+    function push(a, d) { if (!Number.isFinite(d)) d = Infinity; if (d > a.max) a.max = d; a.sumSq += d * d; a.n++; }
+    function newAcc() { return { max: 0, sumSq: 0, n: 0 }; }
+    function readComposed(el) {
+        const cs = getComputedStyle(el);
+        const m = new DOMMatrix();
+        let out = m;
+        const tr = cs.translate, sc = cs.scale, ro = cs.rotate, tf = cs.transform;
+        if (tr && tr !== 'none') { const p = tr.split(/\s+/).map(parseFloat); out = out.translate(p[0] || 0, p.length > 1 ? (p[1] || 0) : 0); }
+        if (ro && ro !== 'none') out = out.rotate(parseFloat(ro) || 0);
+        if (sc && sc !== 'none') { const p = sc.split(/\s+/).map(parseFloat); out = out.scale(p[0], p.length > 1 ? p[1] : p[0]); }
+        if (tf && tf !== 'none') out = out.multiply(new DOMMatrix(tf));
+        return { opacity: parseFloat(cs.opacity), matrix: [out.a, out.b, out.c, out.d, out.e, out.f] };
+    }
+    let _p02Native = null, _p02Poly = null;
+    function remountParity() {
+        if (_p02Native && _p02Native.detach) _p02Native.detach();
+        if (_p02Poly && _p02Poly.detach) _p02Poly.detach();
+        const nativeSb = SCENE02_STORYBOARD;
+        const polySb = { tracks: [Object.assign({}, SCENE02_STORYBOARD.tracks[0], { selector: '#p02-poly' })] };
+        try {
+            _p02Native = attachStoryboardRuntime(nativeSb, { runtime: 'native' });
+            // legacy control forces the string transform path via a scoped shim.
+            if (legacyMode.peek()) {
+                const real = window.CSS.supports.bind(window.CSS);
+                window.CSS.supports = function (q, v) {
+                    return (arguments.length === 1 && /translate:\s*0px/.test(q)) ? false : real(q, v);
+                };
+                try { _p02Poly = attachStoryboardRuntime(polySb, { runtime: 'polyfill' }); }
+                finally { window.CSS.supports = real; }
+                $parityPolyLabel.textContent = 'polyfill (legacy string)';
+            } else {
+                _p02Poly = attachStoryboardRuntime(polySb, { runtime: 'polyfill' });
+                $parityPolyLabel.textContent = 'polyfill';
+            }
+        } catch (e) { $pOpacity.textContent = 'err'; }
+    }
+    function scoreParity() {
+        if (!$p02Native || !$p02Poly) return;
+        const a = readComposed($p02Native), b = readComposed($p02Poly);
+        const op = newAcc(), px = newAcc(), mat = newAcc();
+        push(op, Math.abs(a.opacity - b.opacity));
+        push(px, Math.max(Math.abs(a.matrix[4] - b.matrix[4]), Math.abs(a.matrix[5] - b.matrix[5])));
+        let mu = 0; for (let k = 0; k < 4; k++) mu = Math.max(mu, Math.abs(a.matrix[k] - b.matrix[k]));
+        push(mat, mu);
+        setDev($pOpacity, op.max, PARITY_TOL.opacity);
+        setDev($pPx, px.max, PARITY_TOL.transformPx);
+        setDev($pMat, mat.max, PARITY_TOL.matrix);
+    }
+    function setDev(el, v, tol) {
+        el.textContent = Number.isFinite(v) ? v.toFixed(4) : 'unmeasured';
+        el.className = 'v ' + (Number.isFinite(v) && v <= tol ? 'ok' : 'bad');
+    }
+    _legacyBtns.forEach((b) => b.addEventListener('click', () => {
+        legacyMode.set(b.dataset.legacy === 'on');
+        _legacyBtns.forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    }));
+    effect(() => { legacyMode(); if (scene() === 'parity') remountParity(); });
+
+    // ---- scene 03: compile ---------------------------------------------------
+    function currentStoryboard() { return buildAuthorStoryboard(authorCfg.peek()); }
+    function recompile() {
+        const sb = currentStoryboard();
+        const target = compileTarget.peek();
+        let code = '', notes = '';
+        try {
+            if (target === 'native') { code = storyboardToCss(sb); notes = 'native CSS: animation-timeline + animation-range, compositor-driven.'; }
+            else if (target === 'gsap') { code = toGsap(sb, { moduleFormat: 'esm' }); notes = markerNotes(code); }
+            else { code = toRig(sb, { moduleFormat: 'esm' }); notes = markerNotes(code); }
+        } catch (e) { code = '/* ' + e.message + ' */'; }
+        $compileCode.textContent = code;
+        $compileNotes.innerHTML = notes;
+    }
+    function markerNotes(code) {
+        const out = [];
+        if (/CustomEase/.test(code)) out.push('<span class="marker">CustomEase</span>: analytic curve emitted as a sampled path.');
+        const drop = code.match(/Dropped \(rig unsupported\): ([^\n]*)/);
+        if (drop) out.push('<span class="drop">dropped</span>: ' + drop[1]);
+        if (/scroll-timeline is not supported/.test(code)) out.push('<span class="drop">dropped</span>: scroll-timeline track (rig is view-only).');
+        return out.join(' ') || 'clean: nothing dropped, no CustomEase needed.';
+    }
+    _compileBtns.forEach((b) => b.addEventListener('click', () => {
+        compileTarget.set(b.dataset.target);
+        _compileBtns.forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+        recompile();
+    }));
+    effect(() => { authorCfg(); compileTarget(); if (scene() === 'compile') recompile(); });
+
+    // ---- scene 04: zero-GC write counter ------------------------------------
+    // Wrap the subject's style.setProperty page-side: one bump per DOM-boundary
+    // write. The dirty check inside the runtime means an unchanged frame calls
+    // setProperty zero times; a changed frame writes one string per property.
+    let _zHandle = null, _zWrites = 0, _zTotal = 0, _zSweeping = false;
+    function instrumentSubject(el) {
+        const realSet = el.style.setProperty.bind(el.style);
+        el.style.setProperty = function (name, value, prio) {
+            _zWrites++;
+            if (zerogcMode.peek() === 'alloc') {
+                // allocating control: build a throwaway string every write.
+                const waste = ('' + name + value + Math.random()).slice(0, 8);
+                if (waste.length < 0) console.log(waste);
+            }
+            return realSet(name, value, prio);
+        };
+    }
+    function remountZerogc() {
+        if (_zHandle && _zHandle.detach) _zHandle.detach();
+        instrumentSubject($zerogcCard);
+        try { _zHandle = attachStoryboardRuntime(ZEROGC_STORYBOARD, { runtime: 'polyfill' }); }
+        catch (e) { /* native env: counter stays 0, native writes no JS strings */ }
+    }
+    _zerogcBtns.forEach((b) => b.addEventListener('click', () => {
+        zerogcMode.set(b.dataset.mode);
+        _zerogcBtns.forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    }));
+    effect(() => { zerogcMode(); if (scene() === 'zerogc') remountZerogc(); });
+
+    $zerogcRun.addEventListener('click', () => {
+        if (_zSweeping) return;
+        _zSweeping = true; _zTotal = 0;
+        const max = Math.max(1, $zerogcStage.scrollHeight - $zerogcStage.clientHeight);
+        let f = 0;
+        const step = () => {
+            _zWrites = 0;
+            // varying scroll -> every changed property writes; clamped ends -> 0.
+            $zerogcStage.scrollTop = (f / ZEROGC_FRAMES) * max;
+            // telemetry throttled to ~10Hz via a frame-count mask (law).
+            if ((f & 7) === 0) { $zFrame.textContent = String(_zWrites); }
+            _zTotal += _zWrites;
+            f++;
+            if (f <= ZEROGC_FRAMES) { requestAnimationFrame(step); }
+            else { $zTotal.textContent = String(_zTotal); $zFrame.textContent = String(_zWrites); _zSweeping = false; }
+        };
+        requestAnimationFrame(step);
+    });
+
+    // ---- tab switching + progress telemetry ---------------------------------
+    // The active scene + its stage are resolved ONCE per tab switch and cached in
+    // module vars, so the permanent tick() rAF loop allocates nothing per frame
+    // (no Array.find closure, no querySelector). Scene 04 preaches zero-GC; the
+    // demo's own loop obeys it.
+    let _activeSceneName = 'author';
+    let _activeStage = null;
+    function activate(name) {
+        scene.set(name);
+        _scenes.forEach((s) => s.setAttribute('data-active', String(s.dataset.scene === name)));
+        _tabs.forEach((t) => t.setAttribute('aria-selected', String(t.dataset.scene === name)));
+        $telScene.textContent = ({ author: '01', parity: '02', compile: '03', zerogc: '04' })[name];
+        _activeSceneName = name;
+        // Cold path (once per tab switch): resolve + cache the active stage so
+        // tick() never queries the DOM or allocates a closure per frame.
+        const activeEl = _scenes.find((s) => s.dataset.scene === name);
+        _activeStage = activeEl ? activeEl.querySelector('.stage') : null;
+    }
+    _tabs.forEach((t) => t.addEventListener('click', () => activate(t.dataset.scene)));
+
+    // Progress telemetry: throttle textContent to ~10Hz via a frame mask.
+    let _pf = 0;
+    function tick() {
+        if (_activeStage && (_pf & 7) === 0) {
+            const max = Math.max(1, _activeStage.scrollHeight - _activeStage.clientHeight);
+            $telProgress.textContent = Math.round((_activeStage.scrollTop / max) * 100) + '%';
+        }
+        if (_activeSceneName === 'parity' && (_pf & 7) === 0) scoreParity();
+        _pf++;
+        requestAnimationFrame(tick);
+    }
+
+    // ---- boot ----------------------------------------------------------------
+    activate('author');
+    remountAuthor();
+    requestAnimationFrame(tick);
+</script>
+</body>
+</html>

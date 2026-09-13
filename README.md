@@ -31,6 +31,24 @@ drop in the polyfill runtime for browsers without native support.
 npm i @zakkster/lite-scrollforge
 ```
 
+## Positioning
+
+**Author once, target four.** Scroll-driven motion is fragmenting into four
+runtimes -- native CSS Scroll-Driven Animations (fast, compositor-driven, but
+not everywhere yet), GSAP ScrollTrigger (ubiquitous, but a dependency), a
+virtual-scroll rig like `@zakkster/lite-scroll-rig-pro` (transform-batched,
+spring-smoothed), and hand-rolled `IntersectionObserver` polyfills (fragile,
+usually wrong through the `contain` phase). Picking one locks you in.
+
+Scrollforge is the forge in front of all four: you describe the motion **once**,
+as a plain storyboard object, and compile it to whatever the target needs --
+native CSS where it is supported, a polyfill runtime where it is not, a GSAP
+module for a GSAP shop, or rig code for the virtual-scroll runtime. Same
+config-in / artifact-out shape as the rest of the `@zakkster` forge line
+(hueforge, patternforge), applied to scroll. The one promise that makes it a
+forge and not a code generator -- *the polyfill matches native* -- is a number
+in CI (see [the parity oracle](#zero-gc-discipline)), not a claim.
+
 ## Quickstart
 
 ```js
@@ -63,6 +81,7 @@ handle.detach();
 
 ## Table of contents
 
+- [Positioning](#positioning)
 - [Concepts](#concepts)
 - [The storyboard shape](#the-storyboard-shape)
 - [Emitting CSS](#emitting-css)
@@ -70,6 +89,7 @@ handle.detach();
 - [Easings](#easings)
 - [Sequencing many tracks](#sequencing-many-tracks)
 - [Export targets](#export-targets)
+- [The portfolio scroll story](#the-portfolio-scroll-story)
 - [Ecosystem composition](#ecosystem-composition)
 - [Zero-GC discipline](#zero-gc-discipline)
 - [Browser support](#browser-support)
@@ -296,6 +316,30 @@ Rig supports 4 property slots per element (translateX / translateY / scale /
 rotate). Other props emit as a "dropped" comment. Range endpoints pre-scale
 into the rig's `t in [0, 1]` axis (cover exact; entry/exit approximated at
 0.5-split with a warning).
+
+## The portfolio scroll story
+
+The `@zakkster/*` line has **two** scroll answers, and they are not rivals --
+they are the two ends of one pipeline:
+
+- **`@zakkster/lite-scrollforge` (this package) -- native-first authoring.**
+  Describe the motion once; ship native CSS Scroll-Driven Animations where the
+  browser has them (compositor-driven, zero JS in the loop), polyfill where it
+  does not. The subject scrolls in the real document; progress comes from the
+  element's real viewport position.
+- **`@zakkster/lite-scroll-rig-pro` -- virtual-scroll runtime.** A
+  spring-smoothed, transform-batched frame loop that owns the scroll position
+  itself (wheel / touch / keyboard normalized into one clamped target). Use it
+  when you want inertial "smooth scroll" feel, parallax depth, or a JS-driven
+  timeline that native CSS cannot express.
+
+`toRig()` is the **bridge**: author in Scrollforge's native-first storyboard,
+compile to rig code when a project needs the virtual-scroll runtime instead of
+(or behind) native CSS. One authoring surface, either destination -- the same
+story told in both READMEs. The handoff is not just emitted, it is *executed*:
+`test/browser/rig-handoff.test.mjs` stands the emitted `KeyframePool` +
+`DOMScroller` up against the published rig in real Chromium and reads a real
+`matrix3d` back off the DOM.
 
 ## Ecosystem composition
 

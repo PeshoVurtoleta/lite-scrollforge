@@ -1130,11 +1130,14 @@ export function toRig(storyboard, opts) {
     }
 
     lines.push('    const engine = new ScrollEngine(container || document.body);');
-    lines.push('    const scroller = new DOMScroller(elements, pool, { engine: engine });');
+    lines.push('    const scroller = new DOMScroller(elements, pool);');
+    lines.push('    engine.addRenderer(scroller); // DOMScroller is a renderer: render(currentY)');
+    lines.push('    engine.resize();  // seed the scroll ceiling + measure element bounds');
+    lines.push('    engine.start();');
     lines.push('');
     lines.push('    return function detach() {');
-    lines.push('        if (scroller && typeof scroller.dispose === "function") scroller.dispose();');
-    lines.push('        if (engine   && typeof engine.dispose   === "function") engine.dispose();');
+    lines.push('        // engine.destroy() tears down every renderer addRenderer received.');
+    lines.push('        if (engine && typeof engine.destroy === "function") engine.destroy();');
     lines.push('    };');
     lines.push('}');
     return lines.join('\n');

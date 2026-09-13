@@ -4,6 +4,50 @@ All notable changes to `@zakkster/lite-scrollforge` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.3.0] -- 2026-09-13
+
+The positioning release: a four-scene demo, recipes verified in CI against
+published peers, a repositioned README, and one shipped fix -- `toRig` now
+emits code that runs against the current `@zakkster/lite-scroll-rig-pro`.
+Everything but the `toRig` fix and the README is repo-only (outside `files[]`).
+
+### Fixed
+
+- **`toRig` emits code that runs against `@zakkster/lite-scroll-rig-pro@1.3.2`.**
+  The generated `attachScrollRig` now calls `engine.addRenderer(scroller)`,
+  `engine.resize()` (seeds `VirtualScroll.maxScroll`, without which the loop
+  clamps `targetY` to 0 and never advances), and `engine.start()`, and tears
+  down via `engine.destroy()`. Previously it constructed the engine and scroller
+  but wired neither into the run loop, and its teardown called `.dispose()` --
+  not a method on 1.3.2, so a `typeof` guard made detach a silent no-op that
+  also leaked the engine. The change is confined to the cold `toRig` string
+  emitter; the runtime hot path is untouched and the torture GATE holds at the
+  1.2.0 baseline (~159 B/op, major=2, ok). Emitter snapshots regenerated.
+
+### Added
+
+- **`demo/scrollforge.html`** (repo-only) -- a four-scene demo: 01 AUTHOR
+  (storyboard editor + live scroll stage, native/polyfill toggle), 02 PARITY
+  (both runtimes on mirrored elements, live per-property deviation, a legacy-
+  transform control that visibly diverges), 03 COMPILE (live native CSS / GSAP
+  / rig output), 04 ZERO-GC (auto-scroll with the per-frame write counter
+  dropping to 0 at range ends, an allocating control).
+- **Recipes** (repo-only, `recipes/` + `test/recipes.test.js`): `oklch-sunset`
+  (OKLCH custom-property ramp via `@zakkster/lite-color-engine`), `signal-swap`
+  (a `@zakkster/lite-signal` effect that detaches/reattaches on config change),
+  and `rig-handoff` (`toRig` output executed against real rig@1.3.2 in headless
+  Chromium -- self-drives and tears down). Each has a mutate-the-input break
+  control.
+- **`test/demo-guard.test.js`** (repo-only) -- binds the demo's committed write
+  count and parity tolerances to the independently measured
+  (`test/ceilings.test.js`) and oracle (`demo-scene02` corpus item) numbers, so
+  the demo cannot drift from headless truth; asserts the scene-03 native/GSAP/
+  rig emitters are non-empty.
+- **README repositioning** -- a `#positioning` section (author-once /
+  target-four forge framing) and a shared scroll-story section placing
+  scrollforge (native-first authoring) and `@zakkster/lite-scroll-rig-pro`
+  (virtual-scroll runtime) as the two answers, with `toRig` as the bridge.
+
 ## [1.2.0] -- 2026-09-13
 
 The first hot-path change to `Scrollforge.js` since 1.0.1: a per-frame write

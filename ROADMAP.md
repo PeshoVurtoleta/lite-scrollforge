@@ -127,8 +127,8 @@ measurement — the claim is prose.
 ```
 SF0 (1.0.1 — the progress engine: hybrid drive, feedback fix, tall subjects)   [SHIPPED]
   ├─► SF1 (1.1.0 — the native-parity oracle, promoted to release gate)   [SHIPPED]
-  ├─► SF2 (1.2.0 — honest allocations, dirty writes, symmetric detach)   <- NEXT
-  └─► SF3 (1.3.0 — the forge demo and the positioning)
+  ├─► SF2 (1.2.0 — honest allocations, dirty writes, symmetric detach)   [SHIPPED]
+  └─► SF3 (1.3.0 — the forge demo and the positioning)   <- NEXT
         └─► DEFERRED (WAAPI runtime · axis/inline · Safari-ships trigger)
 ```
 
@@ -286,7 +286,7 @@ DONE WHEN
 ---
 package: "@zakkster/lite-scrollforge"
 version_target: 1.2.0
-status: in-progress
+status: shipped
 findings: [SF-05, SF-06]
 depends_on: [SF0]
 ---
@@ -344,7 +344,7 @@ DONE WHEN
 ---
 package: "@zakkster/lite-scrollforge"
 version_target: 1.3.0
-status: planned
+status: in-progress
 depends_on: [SF1, SF2]
 ---
 

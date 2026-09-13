@@ -1,6 +1,6 @@
 {
   "name": "@zakkster/lite-scrollforge",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Zero-GC, zero-dependency single-file ESM authoring layer for CSS Scroll-Driven Animations. Compile storyboards to native CSS, GSAP, or lite-scroll-rig-pro; polyfill runtime for older browsers.",
   "type": "module",
   "main": "./Scrollforge.js",
@@ -31,16 +31,21 @@
     "test:torture": "node --expose-gc test/torture.mjs",
     "test:ceilings": "node --expose-gc --test test/ceilings.test.js",
     "test:recipes": "node --test test/recipes.test.js",
+    "test:demo": "node --test test/demo-guard.test.js",
     "test:coverage": "node --experimental-test-coverage --test 'test/*.test.js'",
     "test:emitter": "node --test test/browser/emitter.test.mjs",
     "test:scorer": "node --test test/browser/scorer.test.mjs",
     "test:browser": "node --test test/browser/oracle.test.mjs",
-    "verify": "npm run test && npm run test:torture && npm run test:ceilings && npm run test:emitter && npm run test:scorer && npm run test:browser"
+    "test:rig-recipe": "node --test test/browser/rig-handoff.test.mjs",
+    "verify": "npm run test && npm run test:torture && npm run test:ceilings && npm run test:recipes && npm run test:demo && npm run test:emitter && npm run test:scorer && npm run test:browser && npm run test:rig-recipe"
   },
   "devDependencies": {
+    "@zakkster/lite-color-engine": "^1.6.0",
     "@zakkster/lite-ease": "^1.1.0",
     "@zakkster/lite-gc-profiler": "^1.16.0",
     "@zakkster/lite-leak": "^1.10.0",
+    "@zakkster/lite-scroll-rig-pro": "^1.3.2",
+    "@zakkster/lite-signal": "^1.5.1",
     "playwright": "^1.62.1"
   },
   "keywords": [
